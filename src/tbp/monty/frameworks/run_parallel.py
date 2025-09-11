@@ -14,6 +14,7 @@ import os
 import re
 import shutil
 import time
+from multiprocessing import Manager, Queue
 from pathlib import Path
 from typing import Any, Iterable, Mapping
 
@@ -250,6 +251,7 @@ def filter_episode_configs(configs: list[dict], episode_spec: str | None) -> lis
 def generate_parallel_eval_configs(
     experiment: DictConfig,
     name: str,
+    simulators: Queue,
 ) -> list[Mapping]:
     """Generate configs for evaluation episodes in parallel.
 
@@ -285,6 +287,7 @@ def generate_parallel_eval_configs(
     while epoch_count < n_epochs:
         for obj in object_names:
             new_experiment: Mapping = OmegaConf.to_object(experiment)  # type: ignore[assignment]
+            new_experiment["config"]["simulators"] = simulators
 
             # No training
             new_experiment["config"].update(
@@ -324,7 +327,9 @@ def generate_parallel_eval_configs(
     return new_experiments
 
 
-def generate_parallel_train_configs(experiment: DictConfig, name: str) -> list[Mapping]:
+def generate_parallel_train_configs(
+    experiment: DictConfig, name: str, simulators: Queue
+) -> list[Mapping]:
     """Generate configs for training episodes in parallel.
 
     Create a config for each object in the experiment. Unlike with parallel eval
@@ -353,6 +358,7 @@ def generate_parallel_train_configs(experiment: DictConfig, name: str) -> list[M
 
     for obj in object_names:
         new_experiment: Mapping = OmegaConf.to_object(experiment)  # type: ignore[assignment]
+        new_experiment["config"]["simulators"] = simulators
 
         # No eval
         new_experiment["config"].update(do_eval=False, do_train=True, n_train_epochs=1)
@@ -381,19 +387,29 @@ def generate_parallel_train_configs(experiment: DictConfig, name: str) -> list[M
 def single_train(experiment):
     output_dir = Path(experiment["config"]["logging"]["output_dir"])
     output_dir.mkdir(exist_ok=True, parents=True)
+    simulators = experiment["config"]["simulators"]
+    del experiment["config"]["simulators"]
+    address = simulators.get()
+    experiment["config"]["dataset_args"]["env_init_args"]["address"] = str(address)
     exp = hydra.utils.instantiate(experiment)
     with exp:
-        print("---------training---------")
+        logger.info(f"{address}:{config['logging_config']['run_name']}: training")
         exp.train()
+        simulators.put(address)
 
 
 def single_evaluate(experiment):
     output_dir = Path(experiment["config"]["logging"]["output_dir"])
     output_dir.mkdir(exist_ok=True, parents=True)
+    simulators = experiment["config"]["simulators"]
+    del experiment["config"]["simulators"]
+    address = simulators.get()
+    experiment["config"]["dataset_args"]["env_init_args"]["address"] = str(address)
     exp = hydra.utils.instantiate(experiment)
     with exp:
-        print("---------evaluating---------")
+        logger.info(f"{address}:{config['logging_config']['run_name']}: evaluating")
         exp.evaluate()
+        simulators.put(address)
         if experiment["config"]["logging"]["log_parallel_wandb"]:
             # WARNING: This relies on logger in the experiment having
             # `self.use_parallel_wandb_logging` set to True
@@ -688,46 +704,74 @@ def main(cfg: DictConfig):
     print_config(cfg)
     register_resolvers()
 
-    if cfg.experiment.config.do_train:
-        assert issubclass(
-            cfg.experiment.config.train_env_interface_class,
-            EnvironmentInterfacePerObject,
-        ), "parallel experiments only work (for now) with per object env interfaces"
+    with Manager() as manager:
+        simulators = manager.Queue()
+        simulators.put("localhost:50051")
+        simulators.put("localhost:50052")
+        simulators.put("localhost:50053")
+        simulators.put("localhost:50054")
+        simulators.put("localhost:50055")
+        simulators.put("localhost:50056")
+        simulators.put("localhost:50057")
+        simulators.put("localhost:50058")
+        simulators.put("localhost:50059")
+        simulators.put("localhost:50060")
+        simulators.put("localhost:50061")
+        simulators.put("localhost:50062")
+        simulators.put("localhost:50063")
+        simulators.put("localhost:50064")
+        simulators.put("localhost:50065")
+        simulators.put("localhost:50066")
+        simulators.put("localhost:50067")
+        simulators.put("localhost:50068")
+        simulators.put("localhost:50069")
+        simulators.put("localhost:50070")
+        simulators.put("localhost:50071")
+        simulators.put("localhost:50072")
+        simulators.put("localhost:50073")
+        simulators.put("localhost:50074")
+        simulators.put("localhost:50075")
 
-        train_configs = generate_parallel_train_configs(
-            cfg.experiment, cfg.experiment.config.logging.run_name
-        )
-        train_configs = filter_episode_configs(train_configs, cfg.episodes)
-        if cfg.print_cfg:
-            print("Printing configs for spot checking")
-            for config in train_configs:
-                print_config(config)
-        else:
-            run_episodes_parallel(
-                train_configs,
-                cfg.num_parallel,
-                cfg.experiment.config.logging.run_name,
-                train=True,
+        if cfg.experiment.config.do_train:
+            assert issubclass(
+                cfg.experiment.config.train_env_interface_class,
+                EnvironmentInterfacePerObject,
+            ), "parallel experiments only work (for now) with per object env interfaces"
+
+            train_configs = generate_parallel_train_configs(
+                cfg.experiment, cfg.experiment.config.logging.run_name, simulators
             )
+            train_configs = filter_episode_configs(train_configs, cfg.episodes)
+            if cfg.print_cfg:
+                print("Printing configs for spot checking")
+                for config in train_configs:
+                    print_config(config)
+            else:
+                run_episodes_parallel(
+                    train_configs,
+                    cfg.num_parallel,
+                    cfg.experiment.config.logging.run_name,
+                    train=True,
+                )
 
-    if cfg.experiment.config.do_eval:
-        assert issubclass(
-            cfg.experiment.config.eval_env_interface_class,
-            EnvironmentInterfacePerObject,
-        ), "parallel experiments only work (for now) with per object env interfaces"
+        if cfg.experiment.config.do_eval:
+            assert issubclass(
+                cfg.experiment.config.eval_env_interface_class,
+                EnvironmentInterfacePerObject,
+            ), "parallel experiments only work (for now) with per object env interfaces"
 
-        eval_configs = generate_parallel_eval_configs(
-            cfg.experiment, cfg.experiment.config.logging.run_name
-        )
-        eval_configs = filter_episode_configs(eval_configs, cfg.episodes)
-        if cfg.print_cfg:
-            print("Printing configs for spot checking")
-            for config in eval_configs:
-                print_config(config)
-        else:
-            run_episodes_parallel(
-                eval_configs,
-                cfg.num_parallel,
-                cfg.experiment.config.logging.run_name,
-                train=False,
+            eval_configs = generate_parallel_eval_configs(
+                cfg.experiment, cfg.experiment.config.logging.run_name, simulators
             )
+            eval_configs = filter_episode_configs(eval_configs, cfg.episodes)
+            if cfg.print_cfg:
+                print("Printing configs for spot checking")
+                for config in eval_configs:
+                    print_config(config)
+            else:
+                run_episodes_parallel(
+                    eval_configs,
+                    cfg.num_parallel,
+                    cfg.experiment.config.logging.run_name,
+                    train=False,
+                )

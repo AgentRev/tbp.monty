@@ -17,7 +17,7 @@ import quaternion as qt
 import scipy
 
 from tbp.monty.frameworks.agents import AgentID
-from tbp.monty.frameworks.models.abstract_monty_classes import Observations
+from tbp.monty.frameworks.models.abstract_monty_classes import Observations, SensorID
 from tbp.monty.frameworks.models.motor_system_state import ProprioceptiveState
 from tbp.monty.frameworks.sensors import SensorID
 
@@ -95,7 +95,7 @@ class MissingToMaxDepth(Transform):
         """
         # loop over sensor modules
         for sm in observations[self.agent_id].keys():
-            m = np.where(observations[self.agent_id][sm]["depth"] <= self.threshold)
+            m = np.where(observations[self.agent_id][sm].depth <= self.threshold)
             observations[self.agent_id][sm]["depth"][m] = self.max_depth
         return observations
 
@@ -439,13 +439,13 @@ class DepthTo3DLocations(Transform):
         """
         for i, sensor_id in enumerate(self.sensor_ids):
             agent_obs = observations[self.agent_id][sensor_id]
-            depth_patch = agent_obs["depth"]
+            depth_patch = agent_obs.depth
 
             # We need a semantic map that masks off-object pixels. We can use the
             # ground-truth semantic map if it's available. Otherwise, we generate one
             # from the depth map and (temporarily) add it to the observation dict.
             if "semantic" in agent_obs.keys():
-                semantic_patch = agent_obs["semantic"]
+                semantic_patch = agent_obs.semantic
             else:
                 # The generated map uses depth observations to determine whether
                 # pixels are on object using 1 meter as a threshold since
@@ -476,7 +476,7 @@ class DepthTo3DLocations(Transform):
                 # self.use_semantic_sensor is not commonly used at present, if ever.
                 # self.depth_clip_sensors implies a surface agent, and
                 # self.use_semantic_sensor implies multi-object experiments.
-                surface_patch = agent_obs["semantic"]
+                surface_patch = agent_obs.semantic
             else:
                 surface_patch = self.get_surface_from_depth(
                     depth_patch,
@@ -525,7 +525,7 @@ class DepthTo3DLocations(Transform):
 
                 # Add sensor-to-world coordinate frame transform, used for surface
                 # normal extraction. View direction is the third column of the matrix.
-                observations[self.agent_id][sensor_id]["world_camera"] = world_camera
+                observations[self.agent_id][sensor_id].world_camera = world_camera
 
             # Extract 3D coordinates of detected objects (semantic_id != 0)
             semantic = surface_patch.reshape(1, -1)
@@ -536,9 +536,9 @@ class DepthTo3DLocations(Transform):
 
                 # Add point-cloud data expressed in sensor coordinate frame. Used for
                 # surface normal extraction
-                observations[self.agent_id][sensor_id]["sensor_frame_data"] = (
-                    sensor_frame_data
-                )
+                observations[self.agent_id][
+                    sensor_id
+                ].sensor_frame_data = sensor_frame_data
             else:
                 detected = semantic.any(axis=0)
                 xyz = xyz.transpose(1, 0)
@@ -547,7 +547,7 @@ class DepthTo3DLocations(Transform):
 
             # Add transformed observation to existing dict. We don't need to create
             # a deepcopy because we are appending a new observation
-            observations[self.agent_id][sensor_id]["semantic_3d"] = semantic_3d
+            observations[self.agent_id][sensor_id].semantic_3d = semantic_3d
 
         return observations
 

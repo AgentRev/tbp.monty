@@ -84,6 +84,10 @@ dev = [
 
     # Python linter and formatter
     'ruff==0.14.2',
+    'grpcio',
+    'grpcio-tools',
+    'protobuf',
+    'grpcio-reflection',
 ]
 generate_api_docs_tool = [
     'docutils>=0.17',
@@ -93,6 +97,9 @@ generate_api_docs_tool = [
     'myst-parser',
     'pydata_sphinx_theme',
     'snowballstemmer<3'
+]
+generate_simulator_proto_tool = [
+    'protobuf'
 ]
 github_readme_sync_tool = [
     'requests',

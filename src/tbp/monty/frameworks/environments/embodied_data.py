@@ -43,9 +43,11 @@ from tbp.monty.frameworks.models.motor_policies import (
 )
 from tbp.monty.frameworks.models.motor_system import MotorSystem
 from tbp.monty.frameworks.models.motor_system_state import (
+    AgentState,
     MotorSystemState,
     ProprioceptiveState,
 )
+from tbp.monty.frameworks.sensors import SensorID
 
 __all__ = [
     "EnvironmentInterface",
@@ -502,7 +504,9 @@ class InformedEnvironmentInterface(EnvironmentInterfacePerObject):
 
     def pre_episode(self):
         super().pre_episode()
-        if self.env._agents[0].action_space_type != "surface_agent":
+        # if self.env._agents[0].action_space_type != "surface_agent":
+        # FIXME: DEMO HARDCODING
+        if "distant_agent":
             on_target_object = self.get_good_view_with_patch_refinement()
             if self.num_distractors == 0:
                 # Only perform this check if we aren't doing multi-object experiments.
@@ -632,7 +636,9 @@ class InformedEnvironmentInterface(EnvironmentInterfacePerObject):
         # Store the current location and orientation of the agent
         # If the hypothesis-guided jump is unsuccesful (e.g. to empty space,
         # or inside an object, we return here)
-        pre_jump_state = self.motor_system._state[self.motor_system._policy.agent_id]
+        pre_jump_state: AgentState = self.motor_system._state[
+            self.motor_system._policy.agent_id
+        ]
 
         # Check that all sensors have identical rotations - this is because actions
         # currently update them all together; if this changes, the code needs
@@ -745,7 +751,7 @@ class InformedEnvironmentInterface(EnvironmentInterfacePerObject):
         else:
             self.get_good_view_with_patch_refinement()
 
-    def handle_failed_jump(self, pre_jump_state, first_sensor):
+    def handle_failed_jump(self, pre_jump_state: AgentState, first_sensor: SensorID):
         """Deal with the results of a failed hypothesis-testing jump.
 
         A failed jump is "off-object", i.e. the object is not perceived by the sensor.

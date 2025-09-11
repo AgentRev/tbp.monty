@@ -19,7 +19,11 @@ import quaternion
 from scipy.spatial.transform import Rotation
 from skimage.color import rgb2hsv
 
-from tbp.monty.frameworks.models.abstract_monty_classes import SensorID, SensorModule
+from tbp.monty.frameworks.models.abstract_monty_classes import (
+    SensorID,
+    SensorModule,
+    SensorObservations,
+)
 from tbp.monty.frameworks.models.motor_system_state import (
     AgentState,
     SensorState,
@@ -174,7 +178,7 @@ class HabitatObservationProcessor:
         self._weight_curvature = weight_curvature
 
     def process(
-        self, observation: HabitatObservation
+        self, observation: SensorObservations
     ) -> tuple[State, HabitatObservationProcessorTelemetry]:
         """Processes observation.
 
@@ -184,15 +188,11 @@ class HabitatObservationProcessor:
         Returns:
             Cortical Message.
         """
-        obs_3d = observation["semantic_3d"]
-        sensor_frame_data = observation["sensor_frame_data"]
-        world_camera = observation["world_camera"]
-        rgba_feat = observation["rgba"]
-        depth_feat = (
-            observation["depth"]
-            .reshape(observation["depth"].size, 1)
-            .astype(np.float64)
-        )
+        obs_3d = data.semantic_3d
+        sensor_frame_data = data.sensor_frame_data
+        world_camera = data.world_camera
+        rgba_feat = data.rgba
+        depth_feat = data.depth.reshape(data.depth.size, 1).astype(np.float64)
         # Assuming squared patches
         center_row_col = rgba_feat.shape[0] // 2
         # Calculate center ID for flat semantic obs
