@@ -198,7 +198,7 @@ class MontyExperiment:
         if model_path:
             if "model.pt" not in model_path.parts:
                 model_path = model_path / "model.pt"
-            state_dict = torch.load(model_path)
+            state_dict = torch.load(model_path, weights_only=False)
             model.load_state_dict(state_dict)
 
         return model

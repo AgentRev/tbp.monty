@@ -393,7 +393,7 @@ def single_train(experiment):
     experiment["config"]["dataset_args"]["env_init_args"]["address"] = str(address)
     exp = hydra.utils.instantiate(experiment)
     with exp:
-        logger.info(f"{address}:{config['logging_config']['run_name']}: training")
+        print(f"{address}:{config['logging_config']['run_name']}: training")
         exp.train()
         simulators.put(address)
 
@@ -407,7 +407,7 @@ def single_evaluate(experiment):
     experiment["config"]["dataset_args"]["env_init_args"]["address"] = str(address)
     exp = hydra.utils.instantiate(experiment)
     with exp:
-        logger.info(f"{address}:{config['logging_config']['run_name']}: evaluating")
+        print(f"{address}:{config['logging_config']['run_name']}: evaluating")
         exp.evaluate()
         simulators.put(address)
         if experiment["config"]["logging"]["log_parallel_wandb"]:
