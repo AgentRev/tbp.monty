@@ -10,6 +10,16 @@
 
 import pytest
 
+from tbp.monty.frameworks.environments.embodied_environment import (
+    EulerAnglesXYZ,
+    VectorXYZ,
+)
+from tbp.monty.frameworks.models.abstract_monty_classes import AgentID
+from tbp.monty.frameworks.models.motor_system_state import (
+    AgentState,
+    ProprioceptiveState,
+)
+
 pytest.importorskip(
     "habitat_sim",
     reason="Habitat Sim optional dependency not installed.",
@@ -292,7 +302,9 @@ class PolicyTest(unittest.TestCase):
             train_dataloader_args=EnvironmentDataLoaderPerObjectTrainArgs(
                 object_names=["cubeSolid"],
                 object_init_sampler=PredefinedObjectInitializer(
-                    positions=[[0.0, 1.5, -0.2]]  # Object is farther away than typical
+                    positions=[
+                        VectorXYZ((0.0, 1.5, -0.2))
+                    ]  # Object is farther away than typical
                 ),
             ),
             monty_config=PatchAndViewMontyConfig(
@@ -354,8 +366,9 @@ class PolicyTest(unittest.TestCase):
                     num_distractors=10,
                 ),
                 object_init_sampler=PredefinedObjectInitializer(
-                    positions=[[0.2, 1.5, -0.2]]  # Object is farther away *and* to
-                    # the right
+                    positions=[
+                        VectorXYZ((0.2, 1.5, -0.2))
+                    ]  # Object is farther away *and* to the right
                 ),
             ),
             monty_config=PatchAndViewMontyConfig(
@@ -383,8 +396,8 @@ class PolicyTest(unittest.TestCase):
             train_dataloader_args=EnvironmentDataLoaderPerObjectTrainArgs(
                 object_names=["cubeSolid"],
                 object_init_sampler=PredefinedObjectInitializer(
-                    positions=[[-0.1, 1.5, -0.2]],
-                    rotations=[[45, 45, 45]],
+                    positions=[VectorXYZ((-0.1, 1.5, -0.2))],
+                    rotations=[EulerAnglesXYZ((45, 45, 45))],
                 ),
             ),
             monty_config=SurfaceAndViewMontyConfig(
@@ -1050,7 +1063,7 @@ class PolicyTest(unittest.TestCase):
             # current orientation
             agent_direction = np.array(
                 hab_utils.quat_rotate_vector(
-                    exp.model.motor_system._state["agent_id_0"]["rotation"],
+                    exp.model.motor_system._state[AgentID("agent_id_0")].rotation,
                     [
                         0,
                         0,
@@ -1097,8 +1110,15 @@ class PolicyTest(unittest.TestCase):
         )
 
         # Initialize motor-system state
-        motor_system._state = dict(agent_id_0={})
-        motor_system._state["agent_id_0"]["rotation"] = qt.quaternion(1, 0, 0, 0)
+        motor_system._state = ProprioceptiveState(
+            {
+                AgentID("agent_id_0"): AgentState(
+                    position=np.array([0, 0, 0]),  # unused
+                    rotation=qt.quaternion(1, 0, 0, 0),
+                    sensors={},  # unused
+                )
+            }
+        )
 
         # Step 1
         # fake_obs_pc contains observations including the surface normal and principal
@@ -1190,7 +1210,7 @@ class PolicyTest(unittest.TestCase):
         motor_system._policy.ignoring_pc_counter = motor_system_args["policy_args"][
             "min_general_steps"
         ]
-        motor_system._state["agent_id_0"]["rotation"] = qt.quaternion(0, 0, 1, 0)
+        motor_system._state[AgentID("agent_id_0")].rotation = qt.quaternion(0, 0, 1, 0)
 
         motor_system._policy.processed_observations = self.fake_obs_pc[5]
         direction = motor_system._policy.tangential_direction(motor_system._state)
@@ -1224,8 +1244,15 @@ class PolicyTest(unittest.TestCase):
         )
 
         # Initialize motor system state
-        motor_system._state = dict(agent_id_0={})
-        motor_system._state["agent_id_0"]["rotation"] = qt.quaternion(1, 0, 0, 0)
+        motor_system._state = ProprioceptiveState(
+            {
+                AgentID("agent_id_0"): AgentState(
+                    position=np.array([0, 0, 0]),  # unused
+                    rotation=qt.quaternion(1, 0, 0, 0),
+                    sensors={},  # unused
+                )
+            }
+        )
 
         # Step 1 : PC-guided information, but we haven't taken the minimum number of
         # non-PC steps, so take random step

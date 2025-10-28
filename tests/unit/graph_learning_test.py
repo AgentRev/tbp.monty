@@ -11,6 +11,11 @@ from __future__ import annotations
 
 import pytest
 
+from tbp.monty.frameworks.environments.embodied_environment import (
+    EulerAnglesXYZ,
+    VectorXYZ,
+)
+
 pytest.importorskip(
     "habitat_sim",
     reason="Habitat Sim optional dependency not installed.",
@@ -369,7 +374,7 @@ class GraphLearningTest(BaseGraphTestCases.BaseGraphTest):
             train_dataloader_args=EnvironmentDataLoaderPerObjectTrainArgs(
                 object_names=["capsule3DSolid", "cubeSolid"],
                 object_init_sampler=PredefinedObjectInitializer(
-                    rotations=[[0.0, 0.0, 0.0]]
+                    rotations=[EulerAnglesXYZ((0.0, 0.0, 0.0))]
                 ),
             ),
         )
@@ -380,7 +385,7 @@ class GraphLearningTest(BaseGraphTestCases.BaseGraphTest):
             train_dataloader_args=EnvironmentDataLoaderPerObjectTrainArgs(
                 object_names=["capsule3DSolid", "cubeSolid"],
                 object_init_sampler=PredefinedObjectInitializer(
-                    positions=[[0.0, 1.5, 0.0]]
+                    positions=[VectorXYZ((0.0, 1.5, 0.0))]
                 ),
             ),
             eval_dataloader_class=ED.InformedEnvironmentDataLoader,
@@ -458,7 +463,7 @@ class GraphLearningTest(BaseGraphTestCases.BaseGraphTest):
             train_dataloader_args=EnvironmentDataLoaderPerObjectTrainArgs(
                 object_names=["capsule3DSolid"],
                 object_init_sampler=PredefinedObjectInitializer(
-                    rotations=[[0, 0, 0]],
+                    rotations=[EulerAnglesXYZ((0, 0, 0))],
                 ),
             ),
         )
@@ -944,7 +949,11 @@ class GraphLearningTest(BaseGraphTestCases.BaseGraphTest):
         # on the third episode
         self.assertEqual(
             eval_cfg_2["eval_dataloader_args"]["object_init_sampler"].rotations,
-            [[0.0, 0.0, 0.0], [45.0, 0.0, 0.0], [0.0, 0.0, 0.0]],
+            [
+                EulerAnglesXYZ((0.0, 0.0, 0.0)),
+                EulerAnglesXYZ((45.0, 0.0, 0.0)),
+                EulerAnglesXYZ((0.0, 0.0, 0.0)),
+            ],
         )
 
         # If we made it this far, we have the correct parameters. Now run the experiment
