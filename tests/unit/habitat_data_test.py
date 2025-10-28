@@ -10,6 +10,12 @@
 
 import pytest
 
+from tbp.monty.frameworks.models.abstract_monty_classes import (
+    AgentID,
+    Modality,
+    SensorID,
+)
+
 pytest.importorskip(
     "habitat_sim",
     reason="Habitat Sim optional dependency not installed.",
@@ -26,7 +32,6 @@ from tbp.monty.frameworks.actions.action_samplers import (
 )
 from tbp.monty.frameworks.config_utils.config_args import make_base_policy_config
 from tbp.monty.frameworks.environments.embodied_data import EnvironmentDataLoader
-from tbp.monty.frameworks.environments.embodied_environment import ActionSpace
 from tbp.monty.frameworks.models.motor_policies import BasePolicy
 from tbp.monty.frameworks.models.motor_system import MotorSystem
 from tbp.monty.simulators.habitat import SingleSensorAgent
@@ -34,36 +39,10 @@ from tbp.monty.simulators.habitat.environment import AgentConfig, HabitatEnviron
 
 DATASET_LEN = 10
 DEFAULT_ACTUATION_AMOUNT = 0.25
-AGENT_ID = "camera"
-SENSOR_ID = "sensor_id_0"
-SENSORS = ["depth"]
+AGENT_ID = AgentID("camera")
+SENSOR_ID = SensorID("sensor_id_0")
+SENSORS = [Modality("depth")]
 EXPECTED_STATES = np.random.rand(DATASET_LEN, 64, 64, 1)
-EXPECTED_ACTIONS_DIST = (
-    f"{AGENT_ID}.look_down",
-    f"{AGENT_ID}.look_up",
-    f"{AGENT_ID}.move_forward",
-    f"{AGENT_ID}.turn_left",
-    f"{AGENT_ID}.turn_right",
-    f"{AGENT_ID}.set_agent_pose",
-    f"{AGENT_ID}.set_sensor_rotation",
-)
-EXPECTED_ACTIONS_ABS = (
-    f"{AGENT_ID}.set_yaw",
-    f"{AGENT_ID}.set_agent_pitch",
-    f"{AGENT_ID}.set_sensor_pitch",
-    f"{AGENT_ID}.set_agent_pose",
-    f"{AGENT_ID}.set_sensor_rotation",
-    f"{AGENT_ID}.set_sensor_pose",
-)
-EXPECTED_ACTIONS_SURF = (
-    f"{AGENT_ID}.move_forward",
-    f"{AGENT_ID}.move_tangentially",
-    f"{AGENT_ID}.orient_horizontal",
-    f"{AGENT_ID}.orient_vertical",
-    f"{AGENT_ID}.set_agent_pose",
-    f"{AGENT_ID}.set_sensor_rotation",
-)
-
 
 class HabitatDataTest(unittest.TestCase):
     def setUp(self):
@@ -133,13 +112,6 @@ class HabitatDataTest(unittest.TestCase):
             env, rng=rng, motor_system=motor_system_dist
         )
 
-        # Check distant-agent action space
-        action_space_dist = env_interface_dist.action_space
-        action_space_dist.rng = rng
-        self.assertIsInstance(action_space_dist, ActionSpace)
-        self.assertCountEqual(action_space_dist, EXPECTED_ACTIONS_DIST)
-        self.assertIn(action_space_dist.sample(), EXPECTED_ACTIONS_DIST)
-
         # Check if env interface is getting observations from simulator
         mock_sim_dist.get_sensor_observations.side_effect = self.mock_observations
         for i in range(1, DATASET_LEN):
@@ -198,13 +170,6 @@ class HabitatDataTest(unittest.TestCase):
             motor_system=motor_system_abs,
         )
 
-        # Check absolute action space
-        action_space_abs = env_interface_abs.action_space
-        action_space_abs.rng = rng
-        self.assertIsInstance(action_space_abs, ActionSpace)
-        self.assertCountEqual(action_space_abs, EXPECTED_ACTIONS_ABS)
-        self.assertIn(action_space_abs.sample(), EXPECTED_ACTIONS_ABS)
-
         # Check if datasets are getting observations from simulator
         mock_sim_abs.get_sensor_observations.side_effect = self.mock_observations
         for i in range(1, DATASET_LEN):
@@ -261,13 +226,6 @@ class HabitatDataTest(unittest.TestCase):
         env_interface_surf = EnvironmentDataLoader(
             env, rng=rng, motor_system=motor_system_surf
         )
-
-        # Check surface-agent action space
-        action_space_surf = env_interface_surf.action_space
-        action_space_surf.rng = rng
-        self.assertIsInstance(action_space_surf, ActionSpace)
-        self.assertCountEqual(action_space_surf, EXPECTED_ACTIONS_SURF)
-        self.assertIn(action_space_surf.sample(), EXPECTED_ACTIONS_SURF)
 
         # Check if datasets are getting observations from simulator
         mock_sim_surf.get_sensor_observations.side_effect = self.mock_observations

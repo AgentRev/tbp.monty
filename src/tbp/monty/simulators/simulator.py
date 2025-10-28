@@ -6,13 +6,20 @@
 # Use of this source code is governed by the MIT
 # license that can be found in the LICENSE file or at
 # https://opensource.org/licenses/MIT.
-from typing import Dict, List, Optional, Protocol, Sequence
+from __future__ import annotations
+from typing import Sequence
+
+from typing import Protocol
 
 from tbp.monty.frameworks.actions.actions import Action
 from tbp.monty.frameworks.environments.embodied_environment import (
+    ObjectID,
     QuaternionWXYZ,
+    SemanticID,
     VectorXYZ,
 )
+from tbp.monty.frameworks.models.abstract_monty_classes import Observations
+from tbp.monty.frameworks.models.motor_system_state import ProprioceptiveState
 
 
 class Simulator(Protocol):
@@ -23,26 +30,19 @@ class Simulator(Protocol):
     proprioceptive state to send to Monty.
     """
 
-    # TODO - do we need a way to abstract the concept of "agent"?
-    def initialize_agent(self, agent_id, agent_state):
-        """Update agent runtime state."""
-        ...
-
-    def remove_all_objects(self):
+    def remove_all_objects(self) -> None:
         """Remove all objects from the simulated environment."""
         ...
 
     def add_object(
         self,
         name: str,
-        position: VectorXYZ = (0.0, 0.0, 0.0),
-        rotation: QuaternionWXYZ = (1.0, 0.0, 0.0, 0.0),
-        scale: VectorXYZ = (1.0, 1.0, 1.0),
-        semantic_id: Optional[str] = None,
-        enable_physics: bool = False,
-        object_to_avoid: bool = False,
-        primary_target_bb: Optional[List] = None,
-    ) -> None:
+        position: VectorXYZ | None = None,
+        rotation: QuaternionWXYZ | None = None,
+        scale: VectorXYZ | None = None,
+        semantic_id: SemanticID | None = None,
+        primary_target_object: ObjectID | None = None,
+    ) -> tuple[ObjectID, SemanticID | None]:
         """Add new object to simulated environment.
 
         Adds a new object based on the named object. This assumes that the set of
@@ -50,61 +50,44 @@ class Simulator(Protocol):
 
         Args:
             name: Registered object name.
-            position: Initial absolute position of the object.
-            rotation: Initial orientation of the object.
-            scale: Initial object scale.
-            semantic_id: Optional override for the object's semantic ID.
-            enable_physics: Whether to enable physics on the object.
-            object_to_avoid: If True, ensure the object is not colliding with
-              other objects.
-            primary_target_bb: If not None, this is a list of the min and
-              max corners of a bounding box for the primary object, used to prevent
-              obscuring the primary object with the new object.
+            position: Initial absolute position of the object. Defaults to None.
+            rotation: Initial orientation of the object. Defaults to None.
+            scale: Initial object scale. Defaults to None.
+            semantic_id: Optional override for the object's semantic ID. Defaults to
+                None.
+            primary_target_object: ID of the primary target object. If not None, the
+                added object will be positioned so that it does not obscure the initial
+                view of the primary target object (which avoiding collision alone cannot
+                guarantee). Used when adding multiple objects. Defaults to None.
+
+        Returns:
+            Tuple with the ID of the added object and optionally, the semantic ID of the
+            object.
         """
         ...
 
-    @property
-    def num_objects(self) -> int:
-        """Return the number of instantiated objects in the environment."""
-        ...
-
-    @property
-    def action_space(self):
-        """Returns the set of all available actions."""
-        ...
-
-    def get_agent(self, agent_id):
-        """Return agent instance."""
-        ...
-
-    @property
-    def observations(self):
-        """Get sensor observations."""
-        ...
-
-    @property
-    def states(self):
-        """Get agent and sensor states."""
-        ...
-
-    def apply_actions(self, actions: Sequence[Action]) -> Dict[str, Dict]:
+    def step(self, actions: Sequence[Action]) -> tuple[Observations, ProprioceptiveState]:
         """Execute the given actions in the environment.
 
         Args:
             actions: The actions to execute.
 
         Returns:
-            A dictionary with the observations grouped by agent_id.
+            The observations from the simulator and proprioceptive state.
 
         Note:
             If the actions are an empty sequence, the current observations are returned.
         """
         ...
 
-    def reset(self):
-        """Reset the simulator."""
+    def reset(self) -> tuple[Observations, ProprioceptiveState]:
+        """Reset the simulator.
+
+        Returns:
+            The initial observations from the simulator and proprioceptive state.
+        """
         ...
 
-    def close(self):
+    def close(self) -> None:
         """Close any resources used by the simulator."""
         ...
