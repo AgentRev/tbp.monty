@@ -6,15 +6,19 @@
 # Use of this source code is governed by the MIT
 # license that can be found in the LICENSE file or at
 # https://opensource.org/licenses/MIT.
-from typing import Dict, List, Optional
+from __future__ import annotations
 
 from mujoco import MjData, MjModel, MjsBody, MjSpec, mjtGeom
 
 from tbp.monty.frameworks.actions.actions import Action
 from tbp.monty.frameworks.environments.embodied_environment import (
+    ObjectID,
     QuaternionWXYZ,
+    SemanticID,
     VectorXYZ,
 )
+from tbp.monty.frameworks.models.abstract_monty_classes import Observations
+from tbp.monty.frameworks.models.motor_system_state import ProprioceptiveState
 from tbp.monty.simulators.simulator import Simulator
 
 
@@ -47,9 +51,6 @@ class MuJoCoSimulator(Simulator):
         """Recompile the MuJoCo model while retaining any state data."""
         self.model, self.data = self.spec.recompile(self.model, self.data)
 
-    def initialize_agent(self, agent_id, agent_state) -> None:
-        pass
-
     def remove_all_objects(self) -> None:
         self.spec = MjSpec()
         self._recompile()
@@ -59,14 +60,16 @@ class MuJoCoSimulator(Simulator):
     def add_object(
         self,
         name: str,
-        position: VectorXYZ = (0.0, 0.0, 0.0),
-        rotation: QuaternionWXYZ = (1.0, 0.0, 0.0, 0.0),
-        scale: VectorXYZ = (1.0, 1.0, 1.0),
-        semantic_id: Optional[str] = None,
-        enable_physics: bool = False,
-        object_to_avoid: bool = False,
-        primary_target_bb: Optional[List] = None,
-    ) -> None:
+        position: VectorXYZ | None = None,
+        rotation: QuaternionWXYZ | None = None,
+        scale: VectorXYZ | None = None,
+        semantic_id: SemanticID | None = None,
+        primary_target_object: ObjectID | None = None,
+    ) -> tuple[ObjectID, SemanticID | None]:
+        position = position or VectorXYZ((0.0, 0.0, 0.0))
+        rotation = rotation or QuaternionWXYZ((1.0, 0.0, 0.0, 0.0))
+        scale = scale or VectorXYZ((1.0, 1.0, 1.0))
+
         obj_name = f"{name}_{self._object_count}"
 
         # TODO: support arbitrary objects from a registry
@@ -126,29 +129,11 @@ class MuJoCoSimulator(Simulator):
     def num_objects(self) -> int:
         return self._object_count
 
-    @property
-    def action_space(self) -> None:
-        pass
+    def step(self, action: Action) -> tuple[Observations, ProprioceptiveState]:
+        return Observations({}), ProprioceptiveState({})
 
-    def get_agent(
-        self,
-        agent_id: str,  # TODO - replace with newtype
-    ) -> None:
-        pass
-
-    @property
-    def observations(self) -> None:
-        pass
-
-    @property
-    def states(self) -> None:
-        pass
-
-    def apply_action(self, action: Action) -> Dict[str, Dict]:
-        return {}
-
-    def reset(self) -> None:
-        pass
+    def reset(self) -> tuple[Observations, ProprioceptiveState]:
+        return Observations({}), ProprioceptiveState({})
 
     def close(self) -> None:
         pass

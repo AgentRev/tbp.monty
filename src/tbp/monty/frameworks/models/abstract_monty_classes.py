@@ -9,6 +9,44 @@
 # https://opensource.org/licenses/MIT.
 
 import abc
+from typing import Any, Dict, NewType
+
+import numpy as np
+import numpy.typing as npt
+
+Modality = NewType("Modality", str)
+"""Unique identifier for a modality."""
+
+class SensorObservations(Dict[Modality, npt.NDArray[Any]]):
+    """Observations from a sensor."""
+
+    rgba: npt.NDArray[np.int_]  # TODO: Verify specific type
+    depth: npt.NDArray[np.float64]  # TODO: Verify specific type
+    semantic: npt.NDArray[np.int_]  # TODO: Verify specific type
+    semantic_3d: npt.NDArray[np.int_]  # TODO: Verify specific type
+    sensor_frame_data: npt.NDArray[np.int_]  # TODO: Verify specific type
+    world_camera: npt.NDArray[np.int_]  # TODO: Verify specific type
+    pixel_loc: npt.NDArray[np.float64]  # TODO: Verify specific type
+    raw: npt.NDArray[np.uint8]
+
+SensorID = NewType("SensorID", str)
+"""Unique identifier for a sensor."""
+
+
+class AgentObservations(Dict[SensorID, SensorObservations]):
+    """Observations from an agent."""
+
+    pass
+
+
+AgentID = NewType("AgentID", str)
+"""Unique identifier for an agent."""
+
+
+class Observations(Dict[AgentID, AgentObservations]):
+    """Observations from the environment."""
+
+    pass
 
 
 class Monty(metaclass=abc.ABCMeta):

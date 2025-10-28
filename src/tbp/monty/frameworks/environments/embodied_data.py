@@ -8,7 +8,7 @@
 # license that can be found in the LICENSE file or at
 # https://opensource.org/licenses/MIT.
 
-import copy
+import dataclasses
 import logging
 import math
 from pprint import pformat
@@ -27,6 +27,16 @@ from tbp.monty.frameworks.actions.actions import (
     SetAgentPose,
     SetSensorRotation,
 )
+from tbp.monty.frameworks.config_utils.make_dataset_configs import (
+    ObjectInitializer,
+    ObjectParams,
+)
+from tbp.monty.frameworks.environments.embodied_environment import (
+    EmbodiedEnvironment,
+    ObjectID,
+    SemanticID,
+)
+from tbp.monty.frameworks.models.abstract_monty_classes import AgentID, Observations
 from tbp.monty.frameworks.models.motor_policies import (
     GetGoodView,
     InformedPolicy,
@@ -39,8 +49,6 @@ from tbp.monty.frameworks.models.motor_system_state import (
     MotorSystemState,
     ProprioceptiveState,
 )
-
-from .embodied_environment import EmbodiedEnvironment
 
 __all__ = [
     "EnvironmentDataset",
@@ -89,22 +97,19 @@ class EnvironmentDataset(Dataset):
         assert isinstance(env, EmbodiedEnvironment)
         self.env = env
 
-    @property
-    def action_space(self):
-        return self.env.action_space
-
     def reset(self):
-        observation = self.env.reset()
-        state = self.env.get_state()
+        observation, state = self.env.reset()
 
         if self.transform is not None:
             observation = self.apply_transform(self.transform, observation, state)
-        return observation, ProprioceptiveState(state) if state else None
+        return observation, state if state else None
 
     def close(self):
         self.env.close()
 
-    def apply_transform(self, transform, observation, state):
+    def apply_transform(
+        self, transform, observation: Observations, state: ProprioceptiveState
+    ) -> Observations:
         if isinstance(transform, list):
             for t in transform:
                 observation = t(observation, state)
@@ -113,11 +118,10 @@ class EnvironmentDataset(Dataset):
         return observation
 
     def __getitem__(self, action: Action):
-        observation = self.env.step(action)
-        state = self.env.get_state()
+        observation, state = self.env.step(action)
         if self.transform is not None:
             observation = self.apply_transform(self.transform, observation, state)
-        return observation, ProprioceptiveState(state) if state else None
+        return observation, state if state else None
 
     def __len__(self):
         return math.inf
@@ -221,7 +225,13 @@ class EnvironmentDataLoaderPerObject(EnvironmentDataLoader):
     sampled from the same object list, can be added.
     """
 
-    def __init__(self, object_names, object_init_sampler, *args, **kwargs):
+    def __init__(
+        self,
+        object_names,
+        object_init_sampler: ObjectInitializer,
+        *args,
+        **kwargs,
+    ):
         """Initialize dataloader.
 
         Args:
@@ -233,9 +243,10 @@ class EnvironmentDataLoaderPerObject(EnvironmentDataLoader):
                     target objects were sampled; used to sample distractor objects
                 num_distractors : the number of distractor objects to add to the
                     environment
-            object_init_sampler: Function that returns dict with position, rotation,
-                and scale of objects when re-initializing. To keep configs
-                serializable, default is set to :class:`DefaultObjectInitializer`.
+            object_init_sampler: ObjectInitializer that returns ObjectParams with
+                position, rotation, and scale of objects when re-initializing. To keep
+                configs serializable, default is set to
+                :class:`DefaultObjectInitializer`.
             *args: ?
             **kwargs: ?
 
@@ -278,9 +289,9 @@ class EnvironmentDataLoaderPerObject(EnvironmentDataLoader):
     def pre_episode(self):
         super().pre_episode()
 
-        self.motor_system._state[self.motor_system._policy.agent_id][
-            "motor_only_step"
-        ] = False
+        self.motor_system._state[
+            AgentID(self.motor_system._policy.agent_id)
+        ].motor_only_step = False
 
     def post_episode(self):
         super().post_episode()
@@ -312,11 +323,11 @@ class EnvironmentDataLoaderPerObject(EnvironmentDataLoader):
         starting_integer = 1  # Start at 1 so that we can distinguish on-object semantic
         # IDs (>0) from being off object (semantic_id == 0 in Habitat by default)
         self.semantic_id_to_label = {
-            i + starting_integer: label
+            SemanticID(i + starting_integer): label
             for i, label in enumerate(self.source_object_list)
         }
         self.semantic_label_to_id = {
-            label: i + starting_integer
+            label: SemanticID(i + starting_integer)
             for i, label in enumerate(self.source_object_list)
         }
 
@@ -347,15 +358,16 @@ class EnvironmentDataLoaderPerObject(EnvironmentDataLoader):
         self.dataset.env.remove_all_objects()
 
         # Specify config for the primary target object and then add it
-        init_params = self.object_params.copy()
-        init_params.pop("euler_rotation")
-        if "quat_rotation" in init_params.keys():
-            init_params.pop("quat_rotation")
-        init_params["semantic_id"] = self.semantic_label_to_id[self.object_names[idx]]
+        init_params = dataclasses.replace(
+            self.object_params,
+            euler_rotation=None,
+            quat_rotation=None,
+            semantic_id=self.semantic_label_to_id[self.object_names[idx]],
+        )
 
         # TODO clean this up with its own specific call i.e. Law of Demeter
         primary_target_obj = self.dataset.env.add_object(
-            name=self.object_names[idx], **init_params
+            name=self.object_names[idx], **init_params.as_dict()
         )
 
         if self.num_distractors > 0:
@@ -369,18 +381,21 @@ class EnvironmentDataLoaderPerObject(EnvironmentDataLoader):
         self.primary_target = {
             "object": self.object_names[idx],
             "semantic_id": self.semantic_label_to_id[self.object_names[idx]],
-            **self.object_params,
+            **self.object_params.as_dict(),
         }
         logger.info(f"New primary target: {pformat(self.primary_target)}")
 
     def add_distractor_objects(
-        self, primary_target_obj, init_params, primary_target_name
+        self,
+        primary_target_obj: ObjectID,
+        init_params: ObjectParams,
+        primary_target_name,
     ):
         """Add arbitrarily many "distractor" objects to the environment.
 
         Args:
-            primary_target_obj : the Habitat object which is the primary target in
-                the scene
+            primary_target_obj : The ID of the object which is the primary target in
+                the scene.
             init_params: parameters used to initialize the object, e.g.
                 orientation; for now, these are identical to the primary target
                 except for the object ID
@@ -395,15 +410,14 @@ class EnvironmentDataLoaderPerObject(EnvironmentDataLoader):
         ]
 
         for __ in range(self.num_distractors):
-            new_init_params = copy.deepcopy(init_params)
-
             new_obj_label = self.rng.choice(sampling_list)
-            new_init_params["semantic_id"] = self.semantic_label_to_id[new_obj_label]
+            new_init_params = dataclasses.replace(
+                init_params, semantic_id=self.semantic_label_to_id[new_obj_label]
+            )
             # TODO clean up the **unpacking used
             self.dataset.env.add_object(
                 name=new_obj_label,
-                **new_init_params,
-                object_to_avoid=True,
+                **new_init_params.as_dict(),
                 primary_target_object=primary_target_obj,
             )
 
@@ -475,9 +489,9 @@ class InformedEnvironmentDataLoader(EnvironmentDataLoaderPerObject):
             if isinstance(self.motor_system._policy, SurfacePolicy):
                 # When we are attempting to find the object, we are always performing
                 # a motor-only step.
-                motor_system_state[self.motor_system._policy.agent_id][
-                    "motor_only_step"
-                ] = attempting_to_find_object
+                motor_system_state[
+                    AgentID(self.motor_system._policy.agent_id)
+                ].motor_only_step = attempting_to_find_object
 
                 if (
                     not attempting_to_find_object
@@ -491,9 +505,9 @@ class InformedEnvironmentDataLoader(EnvironmentDataLoaderPerObject):
                     # want to send data to the learning module after taking the
                     # OrientVertical action. The other three actions in the cycle
                     # are motor-only to keep the surface agent on the object.
-                    motor_system_state[self.motor_system._policy.agent_id][
-                        "motor_only_step"
-                    ] = True
+                    motor_system_state[
+                        AgentID(self.motor_system._policy.agent_id)
+                    ].motor_only_step = True
 
             self.motor_system._state = motor_system_state
 
@@ -530,9 +544,9 @@ class InformedEnvironmentDataLoader(EnvironmentDataLoaderPerObject):
         # For first step of surface-agent policy, always bypass LM processing
         # For distant-agent policy, we still process the first sensation if it is
         # on the object
-        self.motor_system._state[self.motor_system._policy.agent_id][
-            "motor_only_step"
-        ] = isinstance(self.motor_system._policy, SurfacePolicy)
+        self.motor_system._state[
+            AgentID(self.motor_system._policy.agent_id)
+        ].motor_only_step = isinstance(self.motor_system._policy, SurfacePolicy)
 
         return self._observation
 
@@ -703,9 +717,9 @@ class InformedEnvironmentDataLoader(EnvironmentDataLoaderPerObject):
         # and we provide the observation to the next step of the motor policy
         self._counter += 1
 
-        self.motor_system._state[self.motor_system._policy.agent_id][
-            "motor_only_step"
-        ] = True
+        self.motor_system._state[
+            AgentID(self.motor_system._policy.agent_id)
+        ].motor_only_step = True
 
         # TODO refactor so that the whole of the hypothesis driven jumps
         # makes cleaner use of self.motor_system()
