@@ -39,6 +39,7 @@ from tbp.monty.frameworks.config_utils.make_dataset_configs import (
     EnvironmentDataLoaderPerObjectTrainArgs,
     ExperimentArgs,
     PredefinedObjectInitializer,
+    SupervisedPretrainingExperimentArgs,
 )
 from tbp.monty.frameworks.environments import embodied_data as ED
 from tbp.monty.frameworks.experiments import (
@@ -69,8 +70,7 @@ class RunParallelTest(unittest.TestCase):
         ]
         self.supervised_pre_training = dict(
             experiment_class=MontySupervisedObjectPretrainingExperiment,
-            experiment_args=ExperimentArgs(
-                do_eval=False,
+            experiment_args=SupervisedPretrainingExperimentArgs(
                 n_train_epochs=len(self.train_rotations),
             ),
             logging_config=PretrainLoggingConfig(output_dir=self.output_dir),
@@ -162,10 +162,10 @@ class RunParallelTest(unittest.TestCase):
             pfile = os.path.join(parallel_repro_dir, file)
             sfile = os.path.join(serial_repro_dir, file)
 
-            with open(pfile, "r") as f:
+            with open(pfile) as f:
                 ptarget = f.read()
 
-            with open(sfile, "r") as f:
+            with open(sfile) as f:
                 starget = f.read()
 
             ptarget = json.loads(ptarget)

@@ -149,13 +149,13 @@ class HabitatEnvironment(EmbodiedEnvironment):
     def step(self, actions: Sequence[Action]) -> tuple[Observations, ProprioceptiveState]:
         return self._env.apply_actions(actions)
 
-    def remove_all_objects(self):
+    def remove_all_objects(self) -> None:
         return self._env.remove_all_objects()
 
     def reset(self) -> tuple[Observations, ProprioceptiveState]:
         return self._env.reset()
 
-    def close(self):
+    def close(self) -> None:
         _env = getattr(self, "_env", None)
         if _env is not None:
             _env.close()

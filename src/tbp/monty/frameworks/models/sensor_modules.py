@@ -429,7 +429,7 @@ class Probe(SensorModule):
             rotation=state.rotation,
         )
 
-    def step(self, data):
+    def step(self, data) -> State | None:
         if self.save_raw_obs and not self.is_exploring:
             self._snapshot_telemetry.raw_observation(
                 data,
@@ -438,6 +438,8 @@ class Probe(SensorModule):
                 if "location" in self.state.keys()
                 else self.state["position"],
             )
+
+        return None
 
     def pre_episode(self):
         """Reset buffer and is_exploring flag."""
@@ -651,7 +653,7 @@ class HabitatSM(SensorModule):
         state_dict.update(processed_observations=self.processed_obs)
         return state_dict
 
-    def step(self, data):
+    def step(self, data) -> State | None:
         """Turn raw observations into dict of features at location.
 
         Args:

@@ -59,7 +59,7 @@ class RealRobotsEnvironment:
         observation = self._env.reset()
         return dict(**observation, reward=0, done=False, info=None)
 
-    def close(self):
+    def close(self) -> None:
         if self._env is not None:
             self._env.close()
             self._env = None

@@ -293,7 +293,7 @@ class OmniglotEnvironment(EmbodiedEnvironment):
             locations = np.vstack([locations, stroke])
         return locations[1:]
 
-    def close(self):
+    def close(self) -> None:
         self._current_state = None
 
 
@@ -734,7 +734,7 @@ class SaccadeOnImageEnvironment(EmbodiedEnvironment):
         ), f"Didn't extract a patch of size {self.patch_size}"
         return depth_patch, rgb_patch, depth3d_patch, sensor_frame_patch
 
-    def close(self):
+    def close(self) -> None:
         self._current_state = None
 
 
@@ -858,7 +858,7 @@ def load_img(fn):
 
 def load_motor(fn):
     motor = []
-    with open(fn, "r") as fid:
+    with open(fn) as fid:
         lines = fid.readlines()
     lines = [line.strip() for line in lines]
     for myline in lines:

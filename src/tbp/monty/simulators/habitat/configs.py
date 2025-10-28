@@ -7,9 +7,10 @@
 # license that can be found in the LICENSE file or at
 # https://opensource.org/licenses/MIT.
 from __future__ import annotations
+
 import os
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Mapping, Union
+from typing import Callable, Dict, List, Mapping
 
 from tbp.monty.frameworks.config_utils.make_dataset_configs import (
     FiveLMMountConfig,
@@ -84,7 +85,7 @@ class EnvInitArgs:
             ).as_dict()
         ]
     )
-    scene_id: Union[int, None] = field(default=None)
+    scene_id: int | None = field(default=None)
     seed: int = field(default=42)
     data_path: str = os.path.join(os.environ["MONTY_DATA"], "habitat/objects/ycb")
 
@@ -170,10 +171,10 @@ class SinglePTZHabitatDatasetArgs:
     """
 
     env_init_func: Callable = field(default=HabitatEnvironment)
-    env_init_args: Union[Dict, dataclass] = field(
+    env_init_args: Dict | dataclass = field(
         default_factory=lambda: EnvInitArgsSinglePTZ().__dict__
     )
-    transform: Union[Callable, list, None] = field(default=None)
+    transform: Callable | list | None = field(default=None)
 
 
 @dataclass
@@ -188,7 +189,7 @@ class SimpleMountHabitatDatasetArgs:
     env_init_args: Dict = field(
         default_factory=lambda: EnvInitArgsSimpleMount().__dict__
     )
-    transform: Union[Callable, list, None] = field(default=None)
+    transform: Callable | list | None = field(default=None)
 
 
 @dataclass
@@ -197,8 +198,8 @@ class PatchViewFinderMountHabitatDatasetArgs:
     env_init_args: Dict = field(
         default_factory=lambda: EnvInitArgsPatchViewMount().__dict__
     )
-    transform: Union[Callable, list, None] = None
-    rng: Union[Callable, None] = None
+    transform: Callable | list | None = None
+    rng: Callable | None = None
 
     def __post_init__(self):
         agent_args = self.env_init_args["agents"][0].agent_args
@@ -222,7 +223,7 @@ class NoisyPatchViewFinderMountHabitatDatasetArgs:
     env_init_args: Dict = field(
         default_factory=lambda: EnvInitArgsPatchViewMount().__dict__
     )
-    transform: Union[Callable, list, None] = None
+    transform: Callable | list | None = None
 
     def __post_init__(self):
         agent_args = self.env_init_args["agents"][0].agent_args
@@ -358,7 +359,7 @@ class MultiLMMountHabitatDatasetArgs:
     env_init_args: Dict = field(
         default_factory=lambda: EnvInitArgsMultiLMMount().__dict__
     )
-    transform: Union[Callable, list, None] = None
+    transform: Callable | list | None = None
 
     def __post_init__(self):
         agent_args = self.env_init_args["agents"][0].agent_args
@@ -441,8 +442,8 @@ class PatchViewFinderMultiObjectMountHabitatDatasetArgs:
     env_init_args: Dict = field(
         default_factory=lambda: EnvInitArgsPatchViewFinderMultiObjectMount().__dict__
     )
-    transform: Union[Callable, list, None] = None
-    rng: Union[Callable, None] = None
+    transform: Callable | list | None = None
+    rng: Callable | None = None
 
     def __post_init__(self):
         agent_args = self.env_init_args["agents"][0].agent_args
