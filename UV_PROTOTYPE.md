@@ -15,7 +15,7 @@ no-build-isolation-package = ["torch-scatter", "torch-sparse"]
 
 ```sh
 # The --seed is needed so we can build the torch packages
-uv venv -p 3.12 --seed
+uv venv -p 3.13 --seed
 # have to install torch separate from the rest
 # because torch-scatter, etc. have to build without
 # isolation

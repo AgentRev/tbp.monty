@@ -24,6 +24,10 @@ from typing import Any
 from unittest.mock import Mock, patch
 
 from habitat_sim import ActionSpec, Agent, AgentConfiguration
+from tbp.monty.simulators.habitat.actuator import (
+    HabitatActuator,
+    InvalidActionName,
+)
 from typing_extensions import override
 
 from tbp.monty.frameworks.actions.actions import (
@@ -41,10 +45,6 @@ from tbp.monty.frameworks.actions.actions import (
     SetYaw,
     TurnLeft,
     TurnRight,
-)
-from tbp.monty.simulators.habitat.actuator import (
-    HabitatActuator,
-    InvalidActionName,
 )
 from tests.unit.frameworks.actions.fakes.action import FakeAction
 

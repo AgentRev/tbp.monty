@@ -15,7 +15,7 @@
 # platform: default
 name: tbp.monty
 channels:
-  - aihabitat
+  #- aihabitat
   - pytorch
   - pyg
   - conda-forge
@@ -23,10 +23,10 @@ channels:
 
 # Note: Remember to update recipe/meta.yaml when updating this file.
 dependencies:
-  - python=3.8
+  - python>=3.12
 
-  - aihabitat::habitat-sim=0.2.2
-  - aihabitat::withbullet
+  #- aihabitat::habitat-sim=0.2.2
+  #- aihabitat::withbullet
   - conda-forge::cmake>=3.14.0
   - conda-forge::importlib_resources
   - conda-forge::matplotlib>=3.7.3
