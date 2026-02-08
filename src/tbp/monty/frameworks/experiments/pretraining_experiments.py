@@ -26,8 +26,6 @@ from tbp.monty.frameworks.experiments.monty_experiment import (
 
 __all__ = ["MontySupervisedObjectPretrainingExperiment"]
 
-from tbp.monty.frameworks.models.abstract_monty_classes import RuntimeContext
-
 logger = logging.getLogger(__name__)
 
 
