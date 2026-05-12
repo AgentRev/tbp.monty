@@ -10,12 +10,19 @@
 from __future__ import annotations
 
 import logging
-from typing import ClassVar
+import queue
+from logging.handlers import QueueListener
+from typing import ClassVar, Sequence
 
 from tbp.monty.cmp import Goal
 from tbp.monty.frameworks.actions.actions import Action
 from tbp.monty.frameworks.experiments.mode import ExperimentMode
 from tbp.monty.frameworks.loggers.exp_logger import BaseMontyLogger, TestLogger
+from tbp.monty.frameworks.loggers.telemetry import (
+    TELEMETRY_STOP,
+    Telemetry,
+    TelemetryBroker,
+)
 from tbp.monty.frameworks.models.abstract_monty_classes import (
     Monty,
     Observations,
@@ -137,6 +144,11 @@ class MontyBase(Monty):
 
         self._actions: list[Action] = []
         self._goals: list[Goal] = []
+
+        self.telemetry_broker = TelemetryBroker()
+        self._telemetry_queue = queue.Queue()
+        self._telemetry_listener: QueueListener
+        self._configure_telemetry(handlers=[self.telemetry_broker])
 
     def step(
         self,
@@ -524,3 +536,31 @@ class MontyBase(Monty):
         self.step_type = "exploratory_step"
         self.is_seeking_match = False
         logger.info(f"Going into exploratory mode after {self.matching_steps} steps")
+
+    def _configure_telemetry(self, handlers: Sequence[logging.Handler]):
+        # QueueListener fans out to real handlers on its own thread
+        self._telemetry_listener = QueueListener(
+            self._telemetry_queue,
+            *handlers,
+            respect_handler_level=True,  # abide by each handler's own level filter
+        )
+        self._telemetry_listener.start()
+
+    def shutdown_telemetry(self):
+        if self._telemetry_listener is not None:
+            self._telemetry_listener.stop()
+        # Unblock consumers waiting on Queue.get()
+        for event_queues in self.telemetry_broker.subscriptions.values():
+            for event_queue in event_queues:
+                event_queue.put(TELEMETRY_STOP)
+
+    def get_telemetry(self, name: str) -> Telemetry:
+        telemetry_logger = logging.getLogger(f"monty_telemetry.{name}")
+        if not telemetry_logger.handlers:
+            if self._telemetry_queue is None:
+                raise AttributeError("_telemetry_queue is None")
+            telemetry_logger.addHandler(
+                logging.handlers.QueueHandler(self._telemetry_queue)
+            )
+            telemetry_logger.propagate = False
+        return Telemetry(telemetry_logger)

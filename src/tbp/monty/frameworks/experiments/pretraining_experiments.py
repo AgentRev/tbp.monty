@@ -96,8 +96,8 @@ class MontySupervisedObjectPretrainingExperiment(MontyExperiment):
                 )
                 self.live_plotter.show_observations(
                     *self.live_plotter.hardcoded_assumptions(observations, self.model),
-                    num_steps,
-                    is_saccade_on_image_env_interface,
+                    step=num_steps,
+                    is_saccade_on_image=is_saccade_on_image_env_interface,
                 )
             try:
                 actions = self.model.step(ctx, observations, proprioceptive_state)

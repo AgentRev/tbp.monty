@@ -40,7 +40,7 @@ from tbp.monty.frameworks.models.monty_base import MontyBase
 from tbp.monty.frameworks.utils.dataclass_utils import (
     get_subset_of_args,
 )
-from tbp.monty.frameworks.utils.live_plotter import LivePlotter
+from tbp.monty.frameworks.utils.live_plotter import TelemetryLivePlotter
 
 __all__ = ["MontyExperiment"]
 
@@ -85,8 +85,7 @@ class MontyExperiment:
                 self.config["monty_config"]["learning_modules"].keys()
             )
 
-        if self.show_sensor_output:
-            self.live_plotter = LivePlotter()
+        self.live_plotter: TelemetryLivePlotter | None = None
 
         self.train_episodes = config.get("episode", 0)
         self.eval_episodes = config.get("episode", 0)
@@ -124,6 +123,11 @@ class MontyExperiment:
         self.load_environment_interfaces(config)
         self.init_monty_data_loggers(self.config["logging"])
         self.init_counters()
+
+        if self.show_sensor_output:
+            self.live_plotter = TelemetryLivePlotter(
+                self.model.telemetry_broker, self.model
+            )
 
     def init_model(self, monty_config, model_path=None):
         """Initialize the Monty model.
@@ -257,7 +261,7 @@ class MontyExperiment:
         # Initialize time stamp variables for logging
         self.total_train_steps = 0
         self.total_eval_steps = 0
-        self.env_interface = None
+        self.env_interface: Interface | None = None
         self.eval_epochs = 0
         self.train_epochs = 0
 
@@ -499,7 +503,7 @@ class MontyExperiment:
 
         self.logger_handler.pre_episode(self.logger_args)
 
-        if self.show_sensor_output:
+        if self.show_sensor_output and self.live_plotter:
             self.live_plotter.initialize_online_plotting()
 
     def post_episode(self, steps):

@@ -22,6 +22,7 @@ from tbp.monty.frameworks.experiments.mode import ExperimentMode
 from tbp.monty.frameworks.experiments.monty_experiment import (
     MontyExperiment,
 )
+from tbp.monty.frameworks.loggers.telemetry import EpisodeStepEvent
 
 __all__ = ["MontyGeneralizationExperiment", "MontyObjectRecognitionExperiment"]
 
@@ -86,8 +87,9 @@ class MontyObjectRecognitionExperiment(MontyExperiment):
 
         self.logger_handler.pre_episode(self.logger_args)
 
-        if self.show_sensor_output:
+        if self.show_sensor_output and self.live_plotter:
             self.live_plotter.initialize_online_plotting()
+            self.live_plotter.subscribe()
 
     def run_episode_steps(self) -> int:
         """Runs one episode of the experiment.
@@ -102,18 +104,28 @@ class MontyObjectRecognitionExperiment(MontyExperiment):
         step = 0
         ctx = RuntimeContext(rng=self.rng)
         actions: list[Action] = []
+        telemetry = self.model.get_telemetry("live_plotter")
+
         while True:
             observations, proprioceptive_state = self.env_interface.step(actions)
 
-            if self.show_sensor_output:
-                is_saccade_on_image_data_loader = isinstance(
-                    self.env_interface, SaccadeOnImageInterface
-                )
-                self.live_plotter.show_observations(
-                    *self.live_plotter.hardcoded_assumptions(observations, self.model),
-                    step,
-                    is_saccade_on_image_data_loader,
-                )
+            telemetry.snapshot(
+                level=logging.INFO,
+                event=EpisodeStepEvent(
+                    emitter=self.__class__.__name__,
+                    episode=self.eval_episodes,
+                    step=step,
+                    mode=self.experiment_mode,
+                    observations=observations,
+                    proprioceptive_state=proprioceptive_state,
+                    is_saccade_on_image=isinstance(
+                        self.env_interface, SaccadeOnImageInterface
+                    ),
+                ),
+            )
+
+            if self.live_plotter:
+                self.live_plotter.pump()
 
             if self.model.check_reached_max_matching_steps(self.max_steps):
                 logger.info(
@@ -121,12 +133,12 @@ class MontyObjectRecognitionExperiment(MontyExperiment):
                 )
                 # Need to break here already, otherwise there are problems
                 # when the object is recognized in the last step
-                return step
+                break
 
             if step >= (self.max_total_steps):
                 logger.info(f"Terminated due to maximum episode steps : {step}")
                 self.model.deal_with_time_out()
-                return step
+                break
 
             try:
                 if self.model.is_motor_only_step:
@@ -145,15 +157,22 @@ class MontyObjectRecognitionExperiment(MontyExperiment):
                 #       fully. For example, we know how many steps the policy will take,
                 #       so the experiment can set max steps based on that knowledge
                 #       alone.
-                self.model.set_is_done()
-                return step
+                self.model.set_is_done()  # TODO: specific to MontyForGraphMatching
+                break
 
             if self.model.is_done:
                 # Check this right after step to avoid setting time out
                 # after object was already recognized.
-                return step
+                break
 
             step += 1
+
+        return step
+
+    def post_episode(self, *args, **kwargs):
+        super().post_episode(*args, **kwargs)
+        if self.live_plotter:
+            self.live_plotter.unsubscribe()
 
 
 class MontyGeneralizationExperiment(MontyObjectRecognitionExperiment):

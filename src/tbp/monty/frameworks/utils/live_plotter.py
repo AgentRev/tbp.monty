@@ -8,11 +8,20 @@
 # https://opensource.org/licenses/MIT.
 from __future__ import annotations
 
+import os
+from typing import ClassVar, Sequence
+
 import matplotlib.pyplot as plt
 import numpy as np
 
 from tbp.monty.frameworks.agents import AgentID
-from tbp.monty.frameworks.models.abstract_monty_classes import Monty, Observations
+from tbp.monty.frameworks.loggers.telemetry import (
+    EpisodeStepEvent,
+    TelemetryBroker,
+    TelemetryConsumer,
+)
+from tbp.monty.frameworks.models.abstract_monty_classes import Observations
+from tbp.monty.frameworks.models.monty_base import MontyBase
 from tbp.monty.frameworks.sensors import SensorID
 from tbp.monty.frameworks.utils.plot_utils import add_patch_outline_to_view_finder
 
@@ -34,10 +43,11 @@ class LivePlotter:
     - "depth" modality in "patch" sensor observation
     """
 
-    def __init__(self):
-        pass
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
 
     def initialize_online_plotting(self):
+        os.environ.pop("QT_QPA_PLATFORM_PLUGIN_PATH", None)  # prevent crash on WSL
         self.fig, self.ax = plt.subplots(1, 3, figsize=(9, 6))
         self.fig.subplots_adjust(top=1.1)
         # self.colorbar = self.fig.colorbar(None, fraction=0.046, pad=0.04)
@@ -45,7 +55,7 @@ class LivePlotter:
         self.setup_sensor_ax()
         self.setup_mlh_ax()
 
-    def hardcoded_assumptions(self, observation: Observations, model: Monty):
+    def hardcoded_assumptions(self, observation: Observations, model: MontyBase):
         """Extract some of the hardcoded assumptions from the observation.
 
         TODO: Don't do this. It is here for now to highlight the fragility of the
@@ -110,7 +120,7 @@ class LivePlotter:
         mlh,
         mlh_model,
         step: int,
-        is_saccade_on_image_data_loader=False,
+        is_saccade_on_image=False,
     ) -> None:
         self.fig.suptitle(f"Observation at step {step}")
         self.show_view_finder(
@@ -118,7 +128,7 @@ class LivePlotter:
             first_learning_module,
             first_sensor_depth,
             view_finder_rgba,
-            is_saccade_on_image_data_loader,
+            is_saccade_on_image,
         )
         self.show_patch(first_sensor_depth)
         if mlh_model:
@@ -254,3 +264,23 @@ class LivePlotter:
         self.ax[2].set_title("MLH")
         self.ax[2].set_axis_off()
         self.ax[2].set_aspect("equal")
+
+
+class TelemetryLivePlotter(LivePlotter, TelemetryConsumer):
+    """Plots sensor observations via matplotlib on the main thread."""
+
+    schema_ids: ClassVar[list[str]] = [EpisodeStepEvent.schema_id]
+
+    def __init__(self, broker: TelemetryBroker, model: MontyBase):
+        super().__init__(broker=broker)
+        self._model = model
+
+    def _consume(self, event: EpisodeStepEvent):
+        self.show_observations(
+            *self.hardcoded_assumptions(event.observations, self._model),
+            step=event.step,
+            is_saccade_on_image=event.is_saccade_on_image,
+        )
+
+    def post_pump(self):
+        plt.pause(0.00001)  # drive the event loop, update the window
