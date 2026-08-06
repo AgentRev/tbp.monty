@@ -29,6 +29,7 @@ from tbp.monty.experiment.environment import (
     SaccadeOnImageFromStreamInterface,
     SaccadeOnImageInterface,
 )
+from tbp.monty.experiment.match_criteria import MatchCriterion
 from tbp.monty.frameworks import telemetry
 from tbp.monty.frameworks.actions.actions import Action
 from tbp.monty.frameworks.experiments.hooks import NoOpStepHook, StepHook
@@ -40,11 +41,10 @@ from tbp.monty.frameworks.loggers.exp_logger import (
 )
 from tbp.monty.frameworks.loggers.wandb_handlers import WandbWrapper
 from tbp.monty.frameworks.models.monty_base import MontyBase
-from tbp.monty.frameworks.telemetry.post_episode import (
-    PostEpisodeTelemetry,
-    PostEpisodeTelemetryConsumer,
+from tbp.monty.frameworks.telemetry.episode.subscribers import (
+    EpisodeTelemetryHandler,
+    MontyHandlerTelemetryConnector,
 )
-from tbp.monty.frameworks.telemetry.producers import TelemetryEmitter
 from tbp.monty.frameworks.utils.dataclass_utils import (
     get_subset_of_args,
 )
@@ -54,6 +54,9 @@ from tbp.monty.memento import Memento
 __all__ = ["MontyExperiment"]
 
 logger = logging.getLogger("tbp.monty")
+telemeter = telemetry.getTelemeter(
+    __name__, event_level=telemetry.INFO, snapshot_level=telemetry.TRACE
+)  # TODO telemetry: equivalent of logger.setLevel
 
 
 class MontyExperiment:
@@ -67,6 +70,7 @@ class MontyExperiment:
     model: MontyBase
     env_interface: Interface | None
 
+    _match_criterion: MatchCriterion
     _recreation_mode: bool
     _monty_cfg: DictConfig | None  # dehydrated Monty config
     _monty_memo: Memento
@@ -82,6 +86,7 @@ class MontyExperiment:
 
         # Feature flag for "recreation" episode/epoch strategy.
         self._recreation_mode = False
+        logger.warning(f"_recreation_mode = {self._recreation_mode}")
         self._monty_cfg = None
         self._monty_memo = {}
 
@@ -99,7 +104,7 @@ class MontyExperiment:
             self.model_path = Path(config["model_name_or_path"])
         else:
             self.model_path = None
-        self.min_lms_match = config["min_lms_match"]
+        self._match_criterion = config["match_criterion"]
         self.show_sensor_output = config["show_sensor_output"]
         self.supervised_lm_ids = config["supervised_lm_ids"]
         if self.supervised_lm_ids == "all":
@@ -405,13 +410,9 @@ class MontyExperiment:
     def init_telemetry(self):
         """Initialize Monty telemetry."""
         # TODO telemetry: Hydra config for levels
-        self.telemetry = TelemetryEmitter(
-            __name__, event_level=telemetry.INFO, snapshot_level=telemetry.TRACE
-        )
-        self.post_episode_telemetry = PostEpisodeTelemetryConsumer(
-            handlers=self.monty_logger.handlers,
-            output_dir=self.output_dir,
-            event_level=telemetry.INFO,
+        self.episode_telemetry = EpisodeTelemetryHandler(telemetry.INFO)
+        self.monty_handler_telemetry = MontyHandlerTelemetryConnector(
+            handlers=self.monty_logger.handlers, output_dir=self.output_dir
         )
 
     def get_epoch_state(self):
@@ -443,6 +444,8 @@ class MontyExperiment:
         learning_modules = instantiate(config.pop("learning_modules"))
         for lm_id, lm in learning_modules.items():
             lm.learning_module_id = lm_id
+            if self._recreation_mode:
+                lm.init_from_ltm()  # TODO: init should have already done everything
 
         sensor_modules = instantiate(config.pop("sensor_modules"))
         motor_system = instantiate(config.pop("motor_system_config"))
@@ -468,7 +471,7 @@ class MontyExperiment:
             **config,
             **monty_args,
         )
-        model.min_lms_match = self.min_lms_match
+        model._match_criterion = self._match_criterion
 
         if monty_args["num_exploratory_steps"] > self.max_total_steps:
             new_max_steps = monty_args["num_exploratory_steps"] + self.max_train_steps
@@ -487,8 +490,9 @@ class MontyExperiment:
     def _restore_monty(self) -> None:
         """Recreate episodic state of Monty model."""
         if self._recreation_mode:
-            self._create_monty()
+            # TODO: we _should_ be able to create Monty _outside_ this condition
             if self._monty_memo:
+                self._create_monty()
                 self.model.restore(self._monty_memo)
             self.logger_handler.model = self.model
         else:
@@ -583,14 +587,7 @@ class MontyExperiment:
         get 'confused'/'FP'.
         """
         self.logger_handler.post_episode(self.logger_args)
-
-        self.telemetry.emit(
-            PostEpisodeTelemetry.from_logger_args(
-                logger_args=self.logger_args,
-                model=self.model,
-                emitter=self.__class__.__name__,
-            )
-        )
+        self.episode_telemetry.post_episode(self.logger_args, self.model)
 
         self.model.update_ltm()
         self._snapshot_monty()
@@ -744,8 +741,9 @@ class MontyExperiment:
         # Close monty logging
         self.logger_handler.close(self.logger_args)
 
-        self.post_episode_telemetry.unsubscribe(consume=True)
-        # TODO telemetry: close self.post_episode_telemetry?
+        self.episode_telemetry.unsubscribe()
+        self.monty_handler_telemetry.unsubscribe()
+        # TODO telemetry: close all self.xxx_telemetry?
 
         # Close python logging
         for handler in logger.handlers:
