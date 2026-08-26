@@ -7,6 +7,28 @@
 # license that can be found in the LICENSE file or at
 # https://opensource.org/licenses/MIT.
 
+"""Structured telemetry framework based on Python's logging pub/sub.
+
+Provides a structured telemetry module that emits inline telemetry events routed through
+standard Python `logging` mechanics. Telemetry schemas and events are passed via the
+``extra`` parameter of `logging.Logger.log` and stored within the internal ``__dict__``
+of `logging.LogRecord` objects.
+
+Modules:
+    -   schemas: Defines `TelemetrySchema` and `TelemetryEvent` Pydantic models for
+        structured telemetry.
+    -   publishers: Defines `TelemetryPublisher`, backed by isolated loggers under the
+        ``telemetry.*`` namespace.
+
+Example::
+
+    from tbp.monty.frameworks import telemetry
+    from tbp.monty.frameworks.telemetry.schemas import TelemetryEvent
+
+    telemeter = telemetry.getTelemeter(__name__)
+    telemeter.info(TelemetryEvent(kind="CustomEvent", values={"key": "value"}))
+"""
+
 from __future__ import annotations
 
 import logging
