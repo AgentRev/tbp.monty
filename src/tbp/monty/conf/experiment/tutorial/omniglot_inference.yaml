@@ -28,3 +28,7 @@ experiment:
     supervised_lm_ids: []
     logging:
       run_name: omniglot_inference
+    telemetry:
+      loggers:
+        telemetry.tbp.monty:
+          level: DEBUG

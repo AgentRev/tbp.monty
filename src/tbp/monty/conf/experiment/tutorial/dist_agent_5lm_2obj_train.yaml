@@ -31,3 +31,7 @@ experiment:
       output_dir: ${path.expanduser:"~/tbp/results/monty/projects"}
       run_name: dist_agent_5lm_2obj_train
       wandb_group: debugging
+    telemetry:
+      loggers:
+        telemetry.tbp.monty:
+          level: DEBUG

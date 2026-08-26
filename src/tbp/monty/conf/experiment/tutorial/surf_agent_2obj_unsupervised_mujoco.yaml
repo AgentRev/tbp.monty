@@ -35,3 +35,7 @@ experiment:
     logging:
       output_dir: ${path.expanduser:"~/tbp/results/monty/projects"}
       run_name: surf_agent_2obj_unsupervised_mujoco
+    telemetry:
+      loggers:
+        telemetry.tbp.monty:
+          level: DEBUG

@@ -35,3 +35,7 @@ experiment:
       # Specify a name for the evaluation run
       run_name: surf_agent_2obj_eval
       wandb_group: gm_eval_runs
+    telemetry:
+      loggers:
+        telemetry.tbp.monty:
+          level: DEBUG

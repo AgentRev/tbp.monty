@@ -43,3 +43,7 @@ experiment:
       output_dir: ${path.expanduser:"~/tbp/results/monty/projects"}
       # Ensure the run name is unique per experiment configuration.
       run_name: surf_agent_1lm_2obj_train_mujoco
+    telemetry:
+      loggers:
+        telemetry.tbp.monty:
+          level: DEBUG

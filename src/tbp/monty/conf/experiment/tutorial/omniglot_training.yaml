@@ -28,3 +28,7 @@ experiment:
     supervised_lm_ids: all
     logging:
       run_name: omniglot_training
+    telemetry:
+      loggers:
+        telemetry.tbp.monty:
+          level: DEBUG
