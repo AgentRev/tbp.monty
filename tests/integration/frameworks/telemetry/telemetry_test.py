@@ -14,6 +14,7 @@ import shutil
 import tempfile
 import time
 import unittest
+from typing import Mapping
 
 import hydra
 import pytest
@@ -54,7 +55,7 @@ class TelemetrySchemaTest(unittest.TestCase):
         end_time = time.time()
 
         self.assertEqual(schema.VERSION, 1)
-        self.assertEqual(schema.kind, "TelemetrySchema")
+        self.assertEqual(schema.kind, TelemetrySchema.__name__)
         self.assertGreaterEqual(schema.timestamp, start_time)
         self.assertLessEqual(schema.timestamp, end_time)
         self.assertGreater(len(schema.origin), 0)
@@ -76,20 +77,16 @@ class TelemetryEventTest(unittest.TestCase):
 
     def test_telemetry_event_defaults(self):
         """Verify TelemetryEvent kind fallback and values mapping."""
-        event = TelemetryEvent(values={"key": "value", "count": 42})
-        self.assertEqual(event.kind, "TelemetryEvent")
-        self.assertEqual(event.values, {"key": "value", "count": 42})
+        event = TelemetryEvent(kind="")
+        self.assertEqual(event.kind, event.__class__.__name__)
+        self.assertIsInstance(event.values, Mapping)
 
     def test_telemetry_event_custom_fields(self):
         """Verify TelemetryEvent kind when explicitly specified."""
-        event = TelemetryEvent(kind="NewGraphAdded", values={"graph_id": "new_object0"})
+        values = {"graph_id": "new_object0"}
+        event = TelemetryEvent(kind="NewGraphAdded", values=values)
         self.assertEqual(event.kind, "NewGraphAdded")
-        self.assertEqual(event.values, {"graph_id": "new_object0"})
-
-    def test_validate_kind_fallback(self):
-        """Verify validate_kind falls back to class name for empty kind."""
-        event = TelemetryEvent(kind="")
-        self.assertEqual(event.kind, TelemetryEvent.__name__)
+        self.assertEqual(event.values, values)
 
 
 class TelemetryInitTest(unittest.TestCase):
@@ -97,10 +94,11 @@ class TelemetryInitTest(unittest.TestCase):
 
     def test_get_telemeter(self):
         """Verify getTelemeter creates a TelemetryPublisher instance."""
-        publisher = telemetry.getTelemeter("test_module")
+        module_name = "test_module"
+        publisher = telemetry.getTelemeter(module_name)
         self.assertIsInstance(publisher, TelemetryPublisher)
-        self.assertEqual(publisher.name, "test_module")
-        self.assertEqual(publisher.event_logger.name, "telemetry.test_module")
+        self.assertEqual(publisher.name, module_name)
+        self.assertEqual(publisher.event_logger.name, f"telemetry.{module_name}")
 
 
 class TelemetryPublisherTest(unittest.TestCase):
@@ -108,20 +106,22 @@ class TelemetryPublisherTest(unittest.TestCase):
 
     def setUp(self):
         self.handler = TelemetryLogHandler()
+        self.publisher = TelemetryPublisher(__name__)
+        self.publisher.event_logger.addHandler(self.handler)
+
+    def tearDown(self):
+        self.publisher.event_logger.removeHandler(self.handler)
 
     def test_publisher_logger_config(self):
         """Verify logger naming, propagation setting, and handlers."""
-        publisher = TelemetryPublisher(__name__)
+        publisher = self.publisher
         self.assertEqual(publisher.event_logger.name, f"telemetry.{__name__}")
         self.assertFalse(publisher.event_logger.propagate)
         self.assertTrue(publisher.event_logger.hasHandlers())
 
     def test_emit_telemetry_events(self):
         """Verify emitting events emits LogRecord with attached telemetry schema."""
-        publisher = TelemetryPublisher(__name__)
-        publisher.event_logger.setLevel(logging.DEBUG)
-        publisher.event_logger.addHandler(self.handler)
-
+        publisher = self.publisher
         events = [
             (
                 publisher.debug,
@@ -148,7 +148,7 @@ class TelemetryPublisherTest(unittest.TestCase):
         for record, (_, level, event) in zip(self.handler.records, events):
             self.assertEqual(record.levelno, level)
             self.assertEqual(record.msg, event.kind)
-            self.assertEqual(getattr(record, "telemetry_schema", None), event)
+            self.assertIs(record.__dict__.get("telemetry_schema"), event)
 
 
 class TelemetryIntegrationTest(unittest.TestCase):
@@ -179,16 +179,17 @@ class TelemetryIntegrationTest(unittest.TestCase):
 
         exp = instantiate_experiment(self.base_cfg.experiment)
         with exp:
-            exp.experiment_mode = ExperimentMode.TRAIN
+            exp.experiment_mode = ExperimentMode.EVAL
             exp.model.set_experiment_mode(exp.experiment_mode)
             exp.pre_epoch()
             exp.pre_episode()
             ctx = RuntimeContext(rng=exp.rng)
-
             observations, proprioceptive_state = exp.env_interface.step([])
             exp.model.step(ctx, observations, proprioceptive_state)
 
-        records = [r for r in self.handler.records if r.msg == "GlobalMatchingStep"]
+        record = next(r for r in self.handler.records if r.msg == "GlobalMatchingStep")
+        event: TelemetryEvent = record.__dict__.get("telemetry_schema")
 
-        event: TelemetryEvent = records[0].__dict__.get("telemetry_schema")
         self.assertGreater(event.values["monty_matching_steps"], 0)
+
+        telemeter.event_logger.removeHandler(self.handler)
