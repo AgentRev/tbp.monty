@@ -21,6 +21,7 @@ defaults:
   - /env_interface/transform: missing_depthto3d_sensor2_semantic0_clip
   # The logging configuration.
   - /logging: silent_warning_train
+  - /telemetry: info
 
 experiment:
   # The MontySupervisedObjectPretrainingExperiment will provide the model with the
@@ -43,7 +44,3 @@ experiment:
       output_dir: ${path.expanduser:"~/tbp/results/monty/projects"}
       # Ensure the run name is unique per experiment configuration.
       run_name: surf_agent_1lm_2obj_train
-    telemetry:
-      loggers:
-        telemetry.tbp.monty:
-          level: DEBUG

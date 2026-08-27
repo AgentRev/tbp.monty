@@ -10,6 +10,7 @@ defaults:
   - /env_interface: eval_worldimages
   - /env_interface/transform: none
   - /logging: basic_warning_wandb_evidence_eval_runs
+  - /telemetry: info
 
 experiment:
   _target_: tbp.monty.frameworks.experiments.object_recognition_experiments.MontyObjectRecognitionExperiment
@@ -29,7 +30,3 @@ experiment:
     python_log_level: DEBUG
     logging:
       run_name: monty_meets_world_2dimage_inference
-    telemetry:
-      loggers:
-        telemetry.tbp.monty:
-          level: DEBUG

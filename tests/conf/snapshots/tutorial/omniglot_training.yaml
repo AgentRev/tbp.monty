@@ -103,6 +103,10 @@ experiment:
         _target_: wandb.util.generate_id
       wandb_group: debugging
       run_name: omniglot_training
+    telemetry:
+      loggers:
+        telemetry.tbp.monty:
+          level: INFO
     show_sensor_output: false
     max_train_steps: 1000
     max_eval_steps: 500
