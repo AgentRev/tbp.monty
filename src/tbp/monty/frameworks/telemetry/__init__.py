@@ -14,16 +14,32 @@ standard Python `logging` mechanics. Telemetry schemas and events are passed via
 ``extra`` parameter of `logging.Logger.log` and stored within the internal ``__dict__``
 of `logging.LogRecord` objects.
 
-Telemetry log level must be configured via the experiment config YAML. For example, add
-"  - /telemetry: info" under "defaults". Available levels are "info", "debug", "none".
-
-Modules:
+Submodules:
     -   publishers: Defines `TelemetryPublisher`, backed by isolated loggers under the
         ``telemetry.*`` namespace.
     -   schemas: Defines `TelemetrySchema` and `TelemetryEvent` Pydantic models for
         structured telemetry.
 
-Example::
+The telemetry level must be configured via the experiment config YAML. Easiest is adding
+"  - /telemetry: info" under "defaults:". Available configs are "info", "debug", "none".
+
+The global level is defined via the ``telemetry.tbp.monty`` logger. It can be overridden
+on a per-module basis.
+
+Config example::
+
+    experiment:
+      config:
+        telemetry:
+          loggers:
+            # Global level
+            telemetry.tbp.monty:
+              level: CRITICAL
+            # Module-specific level
+            telemetry.tbp.monty.frameworks.models.graph_matching:
+              level: INFO
+
+Usage example::
 
     from tbp.monty.frameworks import telemetry
     from tbp.monty.frameworks.telemetry.schemas import TelemetryEvent
