@@ -108,6 +108,7 @@ class TelemetryPublisherTest(unittest.TestCase):
         self.handler = TelemetryLogHandler()
         self.publisher = TelemetryPublisher(__name__)
         self.publisher.event_logger.addHandler(self.handler)
+        self.publisher.event_logger.setLevel(logging.DEBUG)
 
     def tearDown(self):
         self.publisher.event_logger.removeHandler(self.handler)
@@ -165,6 +166,7 @@ class TelemetryIntegrationTest(unittest.TestCase):
                 overrides=[
                     "experiment=test/profile/base",
                     f"experiment.config.logging.output_dir={self.output_dir}",
+                    "+telemetry=info",
                 ],
             )
 

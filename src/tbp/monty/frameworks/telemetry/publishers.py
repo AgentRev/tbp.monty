@@ -38,10 +38,6 @@ class TelemetryPublisher:
         self.event_logger = logging.getLogger(f"telemetry.{name}")
         self.event_logger.propagate = False  # do not propagate to root logger
 
-        # Override NOTSET level to avoid delegation
-        if self.event_logger.level == logging.NOTSET:
-            self.event_logger.setLevel(logging.DEBUG)
-
         # Prevent logging.lastResort from printing to stderr
         if not self.event_logger.hasHandlers():
             self.event_logger.addHandler(logging.NullHandler())
