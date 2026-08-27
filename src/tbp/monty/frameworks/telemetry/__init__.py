@@ -14,11 +14,14 @@ standard Python `logging` mechanics. Telemetry schemas and events are passed via
 ``extra`` parameter of `logging.Logger.log` and stored within the internal ``__dict__``
 of `logging.LogRecord` objects.
 
+Telemetry log level must be configured via the experiment config YAML. For example, add
+"  - /telemetry: info" under "defaults". Available levels are "info", "debug", "none".
+
 Modules:
-    -   schemas: Defines `TelemetrySchema` and `TelemetryEvent` Pydantic models for
-        structured telemetry.
     -   publishers: Defines `TelemetryPublisher`, backed by isolated loggers under the
         ``telemetry.*`` namespace.
+    -   schemas: Defines `TelemetrySchema` and `TelemetryEvent` Pydantic models for
+        structured telemetry.
 
 Example::
 
