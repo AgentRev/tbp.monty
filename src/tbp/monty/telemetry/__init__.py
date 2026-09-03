@@ -40,6 +40,7 @@ Usage example::
 
     telemeter = telemetry.getTelemeter(__name__)
     telemeter.info(TelemetryEvent(kind="CustomEvent", your_key="your_value", ...))
+    telemeter.debug(TelemetryEvent(kind="DebugEvent", ...))
 """
 
 from tbp.monty.telemetry._api import getTelemeter

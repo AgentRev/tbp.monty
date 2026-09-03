@@ -10,6 +10,9 @@
 from __future__ import annotations
 
 import logging
+from typing import NoReturn
+
+from typing_extensions import deprecated
 
 from tbp.monty.telemetry.schemas import TelemetryEvent
 
@@ -37,12 +40,14 @@ class TelemetryPublisher(logging.Logger):
         if not self.hasHandlers():
             self.addHandler(logging.NullHandler())
 
-    def emit(self, level: int, event: TelemetryEvent):
+    def log(self, level: int, event: TelemetryEvent, *args, **kwargs):
         """Emits a structured telemetry event at the specified log level.
 
         Args:
             level: The log level.
             event: The event instance.
+            *args: passed to `super()` call.
+            **kwargs: passed to `super()` call.
 
         Raises:
             TypeError: If the event is not a `TelemetryEvent`.
@@ -50,33 +55,36 @@ class TelemetryPublisher(logging.Logger):
         if not isinstance(event, TelemetryEvent):
             raise TypeError("This logger is only for telemetry events")
 
-        self.log(
-            level=level,
-            msg=event.kind,
-            extra={"telemetry_schema": event},
-            stacklevel=2,  # reports the stack frame that called this method
-        )
+        kwargs.setdefault("extra", {})["telemetry_schema"] = event
+        super().log(level, event.kind, *args, **kwargs)
 
-    def debug(
-        self,
-        event: TelemetryEvent,
-        *args,  # noqa: ARG002
-    ):
+    def debug(self, event: TelemetryEvent, *args, **kwargs):
         """Emits a structured telemetry event at ``DEBUG`` log level."""
-        self.emit(level=logging.DEBUG, event=event)
+        self.log(logging.DEBUG, event, *args, **kwargs)
 
-    def info(
-        self,
-        event: TelemetryEvent,
-        *args,  # noqa: ARG002
-    ):
+    def info(self, event: TelemetryEvent, *args, **kwargs):
         """Emits a structured telemetry event at ``INFO`` log level."""
-        self.emit(level=logging.INFO, event=event)
+        self.log(logging.INFO, event, *args, **kwargs)
 
-    def critical(
-        self,
-        event: TelemetryEvent,
-        *args,  # noqa: ARG002
-    ):
-        """Emits a structured telemetry event at ``CRITICAL`` log level."""
-        self.emit(level=logging.CRITICAL, event=event)
+    def warning(self, event: TelemetryEvent, *args, **kwargs):
+        """Emits a structured telemetry event at ``WARNING`` log level."""
+        self.log(logging.WARNING, event, *args, **kwargs)
+
+    def error(self, event: TelemetryEvent, *args, **kwargs):
+        """Emits a structured telemetry event at ``ERROR`` log level."""
+        self.log(logging.ERROR, event, *args, **kwargs)
+
+    @deprecated("Unsupported")
+    def exception(self, *args) -> NoReturn:
+        """Unsupported; telemetry does not handle exception logging."""
+        raise NotImplementedError
+
+    @deprecated("Unsupported")
+    def critical(self, *args) -> NoReturn:
+        """Unsupported; ``CRITICAL`` level is reserved for telemetry silencing."""
+        raise NotImplementedError
+
+    @deprecated("Unsupported")
+    def fatal(self, *args) -> NoReturn:
+        """Unsupported; ``CRITICAL`` level is reserved for telemetry silencing."""
+        raise NotImplementedError
