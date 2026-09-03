@@ -22,6 +22,7 @@ import torch
 from omegaconf import DictConfig
 from typing_extensions import Self
 
+from tbp.monty import telemetry
 from tbp.monty.context import RuntimeContext
 from tbp.monty.experiment.environment import (
     Interface,
@@ -35,7 +36,6 @@ from tbp.monty.experiment.recognition_policy import (
     RecognitionPolicy,
     RecognitionStatus,
 )
-from tbp.monty.frameworks import telemetry
 from tbp.monty.frameworks.actions.actions import Action
 from tbp.monty.frameworks.experiments.hooks import NoOpStepHook, StepHook
 from tbp.monty.frameworks.experiments.mode import ExperimentMode

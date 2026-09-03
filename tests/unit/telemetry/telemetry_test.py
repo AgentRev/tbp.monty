@@ -19,13 +19,13 @@ from typing import Mapping
 import hydra
 import pytest
 
+from tbp.monty import telemetry
 from tbp.monty.context import RuntimeContext
-from tbp.monty.frameworks import telemetry
 from tbp.monty.frameworks.experiments.mode import ExperimentMode
 from tbp.monty.frameworks.models import monty_base
-from tbp.monty.frameworks.telemetry.publishers import TelemetryPublisher
-from tbp.monty.frameworks.telemetry.schemas import TelemetryEvent, TelemetrySchema
 from tbp.monty.hydra import instantiate_experiment
+from tbp.monty.telemetry.publishers import TelemetryPublisher
+from tbp.monty.telemetry.schemas import TelemetryEvent, TelemetrySchema
 from tests import HYDRA_ROOT
 
 pytest.importorskip(

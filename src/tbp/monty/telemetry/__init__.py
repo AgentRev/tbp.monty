@@ -41,8 +41,8 @@ Config example::
 
 Usage example::
 
-    from tbp.monty.frameworks import telemetry
-    from tbp.monty.frameworks.telemetry.schemas import TelemetryEvent
+    from tbp.monty import telemetry
+    from tbp.monty.telemetry.schemas import TelemetryEvent
 
     telemeter = telemetry.getTelemeter(__name__)
     telemeter.info(TelemetryEvent(kind="CustomEvent", values={"key": "value"}))
@@ -74,7 +74,7 @@ def getTelemeter(*args, **kwargs):  # noqa: N802 - lowercase
         The publisher instance.
     """
     # Lazy import to avoid circular dependency
-    from tbp.monty.frameworks.telemetry.publishers import (  # noqa: PLC0415
+    from tbp.monty.telemetry.publishers import (  # noqa: PLC0415
         TelemetryPublisher,
     )
 

@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 
-from tbp.monty.frameworks.telemetry.schemas import TelemetryEvent
+from tbp.monty.telemetry.schemas import TelemetryEvent
 
 
 class TelemetryPublisher:

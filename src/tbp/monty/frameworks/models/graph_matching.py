@@ -15,6 +15,7 @@ from typing import Any, ClassVar, Collection, Sequence
 import numpy as np
 import torch
 
+from tbp.monty import telemetry
 from tbp.monty.cmp import Goal, Message, location_mean
 from tbp.monty.context import RuntimeContext
 from tbp.monty.experiment.match_criteria import MatchCriterion
@@ -22,7 +23,6 @@ from tbp.monty.experiment.recognition_policy import (
     RecognitionConclusion,
     RecognitionStatus,
 )
-from tbp.monty.frameworks import telemetry
 from tbp.monty.frameworks.environments.environment import SemanticID
 from tbp.monty.frameworks.experiments.mode import ExperimentMode
 from tbp.monty.frameworks.loggers.exp_logger import BaseMontyLogger
@@ -39,10 +39,10 @@ from tbp.monty.frameworks.models.buffer import FeatureAtLocationBuffer
 from tbp.monty.frameworks.models.goal_generation import GraphGoalGenerator
 from tbp.monty.frameworks.models.monty_base import MontyBase
 from tbp.monty.frameworks.models.object_model import GraphObjectModel
-from tbp.monty.frameworks.telemetry.schemas import TelemetryEvent
 from tbp.monty.geometry import Rotation
 from tbp.monty.memento import Memento
 from tbp.monty.runtime import is_location_only_step
+from tbp.monty.telemetry.schemas import TelemetryEvent
 
 __all__ = ["GraphLM", "GraphMemory", "MontyForGraphMatching"]
 
