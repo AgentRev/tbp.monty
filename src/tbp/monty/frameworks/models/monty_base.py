@@ -550,8 +550,7 @@ class MontyBase(Monty):
             logger.info(f"--- Global Matching Step {self.matching_steps} ---")
             telemeter.info(
                 TelemetryEvent(
-                    kind="GlobalMatchingStep",
-                    values={"monty_matching_steps": self.matching_steps},
+                    kind="GlobalMatchingStep", matching_steps=self.matching_steps
                 )
             )
         elif self.step_type == "exploratory_step":

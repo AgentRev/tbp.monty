@@ -1356,9 +1356,7 @@ class GraphMemory(LMMemory):
         self.models_in_memory[graph_id][input_channel] = model
 
         logger.info(f"Added new graph with id {graph_id} to memory.")
-        telemeter.info(
-            TelemetryEvent(kind="NewGraphAdded", values={"graph_id": graph_id})
-        )
+        telemeter.info(TelemetryEvent(kind="NewGraphAdded", graph_id=graph_id))
 
     def _extend_graph(
         self,
