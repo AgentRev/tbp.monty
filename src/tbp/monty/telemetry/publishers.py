@@ -14,33 +14,28 @@ import logging
 from tbp.monty.telemetry.schemas import TelemetryEvent
 
 
-class TelemetryPublisher:
+class TelemetryPublisher(logging.Logger):
     """Structured telemetry publisher.
 
-    Wraps a `logging.Logger` and emits `TelemetrySchema` as structured `LogRecord`
-    instances routed through the logging pipeline to telemetry subscribers.
+    Subclasses `logging.Logger` and emits `TelemetrySchema` as structured `LogRecord`
+    instances routed through the logging pipeline to telemetry handlers.
+
+    Do not instantiate this class directly; obtain it via `telemetry.getTelemeter`.
 
     Example::
 
-        telemeter = TelemetryPublisher(__name__)
+        telemeter = telemetry.getTelemeter(__name__)
         telemeter.info(TelemetryEvent(...))
     """
 
-    def __init__(self, name: str):
-        """Creates a telemetry publisher backed by a named logger.
-
-        The logger is namespaced under ``telemetry.*``.
-
-        Args:
-            name: Logger name suffix, usually the module name.
-        """
-        self.name = name
-        self.event_logger = logging.getLogger(f"telemetry.{name}")
-        self.event_logger.propagate = False  # do not propagate to root logger
+    def __init__(self, *args, **kwargs):
+        """Creates the publisher; do not instantiate outside this module."""
+        super().__init__(*args, **kwargs)
+        self.propagate = False  # do not propagate to root logger
 
         # Prevent logging.lastResort from printing to stderr
-        if not self.event_logger.hasHandlers():
-            self.event_logger.addHandler(logging.NullHandler())
+        if not self.hasHandlers():
+            self.addHandler(logging.NullHandler())
 
     def emit(self, level: int, event: TelemetryEvent):
         """Emits a structured telemetry event at the specified log level.
@@ -48,22 +43,40 @@ class TelemetryPublisher:
         Args:
             level: The log level.
             event: The event instance.
+
+        Raises:
+            TypeError: If the event is not a `TelemetryEvent`.
         """
-        self.event_logger.log(
+        if not isinstance(event, TelemetryEvent):
+            raise TypeError("This logger is only for telemetry events")
+
+        self.log(
             level=level,
             msg=event.kind,
             extra={"telemetry_schema": event},
             stacklevel=2,  # reports the stack frame that called this method
         )
 
-    def debug(self, event: TelemetryEvent):
+    def debug(
+        self,
+        event: TelemetryEvent,
+        *args,  # noqa: ARG002
+    ):
         """Emits a structured telemetry event at ``DEBUG`` log level."""
         self.emit(level=logging.DEBUG, event=event)
 
-    def info(self, event: TelemetryEvent):
+    def info(
+        self,
+        event: TelemetryEvent,
+        *args,  # noqa: ARG002
+    ):
         """Emits a structured telemetry event at ``INFO`` log level."""
         self.emit(level=logging.INFO, event=event)
 
-    def critical(self, event: TelemetryEvent):
+    def critical(
+        self,
+        event: TelemetryEvent,
+        *args,  # noqa: ARG002
+    ):
         """Emits a structured telemetry event at ``CRITICAL`` log level."""
         self.emit(level=logging.CRITICAL, event=event)

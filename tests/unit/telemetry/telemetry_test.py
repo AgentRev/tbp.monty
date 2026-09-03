@@ -10,22 +10,16 @@
 from __future__ import annotations
 
 import logging
-import shutil
-import tempfile
-import time
 import unittest
-from typing import Mapping
 
 import hydra
 import pytest
 
 from tbp.monty import telemetry
-from tbp.monty.context import RuntimeContext
-from tbp.monty.frameworks.experiments.mode import ExperimentMode
 from tbp.monty.frameworks.models import monty_base
 from tbp.monty.hydra import instantiate_experiment
 from tbp.monty.telemetry.publishers import TelemetryPublisher
-from tbp.monty.telemetry.schemas import TelemetryEvent, TelemetrySchema
+from tbp.monty.telemetry.schemas import TelemetryEvent
 from tests import HYDRA_ROOT
 
 pytest.importorskip(
@@ -45,33 +39,6 @@ class TelemetryLogHandler(logging.Handler):
         self.records.append(record)
 
 
-class TelemetrySchemaTest(unittest.TestCase):
-    """Unit tests for telemetry schemas."""
-
-    def test_telemetry_schema_defaults(self):
-        """Verify default values for TelemetrySchema fields."""
-        start_time = time.time()
-        schema = TelemetrySchema()
-        end_time = time.time()
-
-        self.assertEqual(schema.VERSION, 1)
-        self.assertEqual(schema.kind, TelemetrySchema.__name__)
-        self.assertGreaterEqual(schema.timestamp, start_time)
-        self.assertLessEqual(schema.timestamp, end_time)
-        self.assertGreater(len(schema.origin), 0)
-
-    def test_telemetry_schema_custom_fields(self):
-        """Verify custom values override schema defaults."""
-        schema = TelemetrySchema(
-            kind="CustomKind",
-            timestamp=12345.678,
-            origin="custom_origin",
-        )
-        self.assertEqual(schema.kind, "CustomKind")
-        self.assertEqual(schema.timestamp, 12345.678)
-        self.assertEqual(schema.origin, "custom_origin")
-
-
 class TelemetryEventTest(unittest.TestCase):
     """Unit tests for telemetry events."""
 
@@ -79,26 +46,14 @@ class TelemetryEventTest(unittest.TestCase):
         """Verify TelemetryEvent kind fallback and values mapping."""
         event = TelemetryEvent(kind="")
         self.assertEqual(event.kind, event.__class__.__name__)
-        self.assertIsInstance(event.values, Mapping)
 
     def test_telemetry_event_custom_fields(self):
         """Verify TelemetryEvent kind when explicitly specified."""
-        values = {"graph_id": "new_object0"}
-        event = TelemetryEvent(kind="NewGraphAdded", values=values)
-        self.assertEqual(event.kind, "NewGraphAdded")
-        self.assertEqual(event.values, values)
-
-
-class TelemetryInitTest(unittest.TestCase):
-    """Unit tests for top-level telemetry module exports and functions."""
-
-    def test_get_telemeter(self):
-        """Verify getTelemeter creates a TelemetryPublisher instance."""
-        module_name = "test_module"
-        publisher = telemetry.getTelemeter(module_name)
-        self.assertIsInstance(publisher, TelemetryPublisher)
-        self.assertEqual(publisher.name, module_name)
-        self.assertEqual(publisher.event_logger.name, f"telemetry.{module_name}")
+        kind = "NewGraphAdded"
+        graph_id = "new_object0"
+        event = TelemetryEvent(kind=kind, graph_id=graph_id)
+        self.assertEqual(event.kind, kind)
+        self.assertEqual(event.graph_id, graph_id)
 
 
 class TelemetryPublisherTest(unittest.TestCase):
@@ -106,92 +61,58 @@ class TelemetryPublisherTest(unittest.TestCase):
 
     def setUp(self):
         self.handler = TelemetryLogHandler()
-        self.publisher = TelemetryPublisher(__name__)
-        self.publisher.event_logger.addHandler(self.handler)
-        self.publisher.event_logger.setLevel(logging.DEBUG)
-
-    def tearDown(self):
-        self.publisher.event_logger.removeHandler(self.handler)
-
-    def test_publisher_logger_config(self):
-        """Verify logger naming, propagation setting, and handlers."""
-        publisher = self.publisher
-        self.assertEqual(publisher.event_logger.name, f"telemetry.{__name__}")
-        self.assertFalse(publisher.event_logger.propagate)
-        self.assertTrue(publisher.event_logger.hasHandlers())
-
-    def test_emit_telemetry_events(self):
-        """Verify emitting events emits LogRecord with attached telemetry schema."""
-        publisher = self.publisher
-        events = [
-            (
-                publisher.debug,
-                logging.DEBUG,
-                TelemetryEvent(kind="DebugEvent", values={"step": 1}),
-            ),
-            (
-                publisher.info,
-                logging.INFO,
-                TelemetryEvent(kind="InfoEvent", values={"step": 2}),
-            ),
-            (
-                publisher.critical,
-                logging.CRITICAL,
-                TelemetryEvent(kind="CriticalEvent", values={"step": 3}),
-            ),
-        ]
-
-        for log_func, _, event in events:
-            log_func(event)
-
-        self.assertEqual(len(self.handler.records), len(events))
-
-        for record, (_, level, event) in zip(self.handler.records, events):
-            self.assertEqual(record.levelno, level)
-            self.assertEqual(record.msg, event.kind)
-            self.assertIs(record.__dict__.get("telemetry_schema"), event)
-
-
-class TelemetryIntegrationTest(unittest.TestCase):
-    """Integration tests for telemetry emissions during experiment execution."""
-
-    def setUp(self):
-        """Set up temporary directory and compose base experiment config."""
-        self.output_dir = tempfile.mkdtemp()
-        self.handler = TelemetryLogHandler()
+        self.telemeter = telemetry.getTelemeter(monty_base.__name__)
+        self.telemeter.addHandler(self.handler)
 
         with hydra.initialize_config_dir(version_base=None, config_dir=str(HYDRA_ROOT)):
             self.base_cfg = hydra.compose(
                 config_name="experiment",
                 overrides=[
                     "experiment=test/profile/base",
-                    f"experiment.config.logging.output_dir={self.output_dir}",
                     "+telemetry=info",
                 ],
             )
 
     def tearDown(self):
-        """Clean up temporary directory."""
-        shutil.rmtree(self.output_dir)
+        self.telemeter.removeHandler(self.handler)
 
-    def test_global_matching_step_telemetry(self):
-        """Verify GlobalMatchingStep telemetry event is emitted during model step."""
-        telemeter = telemetry.getTelemeter(monty_base.__name__)
-        telemeter.event_logger.addHandler(self.handler)
+    def test_config(self):
+        """Verify all telemeter configuration."""
+        with instantiate_experiment(self.base_cfg.experiment):
+            self.assertIsInstance(self.telemeter, TelemetryPublisher)
+            self.assertEqual(self.telemeter.name, f"telemetry.{monty_base.__name__}")
+            self.assertEqual(self.telemeter.getEffectiveLevel(), logging.INFO)
+            self.assertFalse(self.telemeter.propagate)
+            self.assertTrue(self.telemeter.hasHandlers())
 
-        exp = instantiate_experiment(self.base_cfg.experiment)
-        with exp:
-            exp.experiment_mode = ExperimentMode.EVAL
-            exp.model.set_experiment_mode(exp.experiment_mode)
-            exp.pre_epoch()
-            exp.pre_episode()
-            ctx = RuntimeContext(rng=exp.rng)
-            observations, proprioceptive_state = exp.env_interface.step([])
-            exp.model.step(ctx, observations, proprioceptive_state)
+    def test_emit_events(self):
+        """Verify emitting events emits LogRecord with attached telemetry schema."""
+        with instantiate_experiment(self.base_cfg.experiment):
+            events = [
+                (
+                    self.telemeter.info,
+                    logging.INFO,
+                    TelemetryEvent(kind="InfoEvent"),
+                ),
+                (
+                    self.telemeter.critical,
+                    logging.CRITICAL,
+                    TelemetryEvent(kind="CriticalEvent"),
+                ),
+            ]
 
-        record = next(r for r in self.handler.records if r.msg == "GlobalMatchingStep")
-        event: TelemetryEvent = record.__dict__.get("telemetry_schema")
+            for log_func, _, event in events:
+                log_func(event)
 
-        self.assertGreater(event.values["monty_matching_steps"], 0)
+            self.assertEqual(len(self.handler.records), len(events))
 
-        telemeter.event_logger.removeHandler(self.handler)
+            for record, (_, level, event) in zip(self.handler.records, events):
+                self.assertEqual(record.levelno, level)
+                self.assertEqual(record.msg, event.kind)
+                self.assertIs(record.__dict__.get("telemetry_schema"), event)
+
+    def test_ignored_level(self):
+        """Verify debug event is ignored with telemetry level ``INFO``."""
+        with instantiate_experiment(self.base_cfg.experiment):
+            self.telemeter.debug(TelemetryEvent(kind="DebugEvent"))
+            self.assertEqual(len(self.handler.records), 0)

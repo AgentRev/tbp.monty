@@ -268,9 +268,7 @@ class MontyExperiment:
         return args
 
     def init_loggers(
-        self,
-        logging_config: dict[str, Any],
-        telemetry_config: dict[str, Any] | None = None,
+        self, logging_config: dict[str, Any], telemetry_config: dict[str, Any]
     ) -> None:
         """Initialize logger and telemeter with specified log level.
 
@@ -293,9 +291,6 @@ class MontyExperiment:
         # Clear any existing tpb.monty logger handlers
         for handler in logger.handlers:
             logger.removeHandler(handler)
-
-        for handler in telemeter.event_logger.handlers:
-            telemeter.event_logger.removeHandler(handler)
 
         # Create basic python logging handlers
         python_logging_handlers: list[logging.Handler] = []
@@ -330,8 +325,7 @@ class MontyExperiment:
             "incremental": True,
         }
         final_config.update(logging_config)
-        if telemetry_config:
-            final_config.update(telemetry_config)
+        final_config.update(telemetry_config)
         logging.config.dictConfig(final_config)
 
     def init_monty_data_loggers(self, logging_config: dict[str, Any]) -> None:
