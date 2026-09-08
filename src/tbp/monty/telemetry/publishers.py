@@ -32,7 +32,7 @@ class TelemetryPublisher(logging.Logger):
     """
 
     def __init__(self, *args, **kwargs):
-        """Creates the publisher; do not instantiate outside this module."""
+        """Initializes the logger; do not instantiate this class outside its module."""
         super().__init__(*args, **kwargs)
         self.propagate = False  # do not propagate to root logger
 
@@ -46,8 +46,8 @@ class TelemetryPublisher(logging.Logger):
         Args:
             level: The log level.
             event: The event instance.
-            *args: passed to `super()` call.
-            **kwargs: passed to `super()` call.
+            *args: Passed forward to ``Logger.log`` method.
+            **kwargs: Passed forward to ``Logger.log`` method.
 
         Raises:
             TypeError: If the event is not a `TelemetryEvent`.
@@ -59,19 +59,43 @@ class TelemetryPublisher(logging.Logger):
         super().log(level, event.kind, *args, **kwargs)
 
     def debug(self, event: TelemetryEvent, *args, **kwargs):
-        """Emits a structured telemetry event at ``DEBUG`` log level."""
+        """Emits a structured telemetry event at ``DEBUG`` log level.
+
+        Args:
+            event: The event instance.
+            *args: Passed forward to ``Logger.log`` method.
+            **kwargs: Passed forward to ``Logger.log`` method.
+        """
         self.log(logging.DEBUG, event, *args, **kwargs)
 
     def info(self, event: TelemetryEvent, *args, **kwargs):
-        """Emits a structured telemetry event at ``INFO`` log level."""
+        """Emits a structured telemetry event at ``INFO`` log level.
+
+        Args:
+            event: The event instance.
+            *args: Passed forward to ``Logger.log`` method.
+            **kwargs: Passed forward to ``Logger.log`` method.
+        """
         self.log(logging.INFO, event, *args, **kwargs)
 
     def warning(self, event: TelemetryEvent, *args, **kwargs):
-        """Emits a structured telemetry event at ``WARNING`` log level."""
+        """Emits a structured telemetry event at ``WARNING`` log level.
+
+        Args:
+            event: The event instance.
+            *args: Passed forward to ``Logger.log`` method.
+            **kwargs: Passed forward to ``Logger.log`` method.
+        """
         self.log(logging.WARNING, event, *args, **kwargs)
 
     def error(self, event: TelemetryEvent, *args, **kwargs):
-        """Emits a structured telemetry event at ``ERROR`` log level."""
+        """Emits a structured telemetry event at ``ERROR`` log level.
+
+        Args:
+            event: The event instance.
+            *args: Passed forward to ``Logger.log`` method.
+            **kwargs: Passed forward to ``Logger.log`` method.
+        """
         self.log(logging.ERROR, event, *args, **kwargs)
 
     @deprecated("Unsupported")
