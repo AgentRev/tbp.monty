@@ -53,7 +53,7 @@ from tbp.monty.frameworks.models.motor_system_state import (
 )
 from tbp.monty.frameworks.sensors import SensorID
 from tbp.monty.frameworks.utils.spatial_arithmetics import normalize
-from tbp.monty.geometry import Rotation
+from tbp.monty.geometry import GazeDirection, Rotation, SurfacePoseVectors
 from tbp.monty.math import DEFAULT_TOLERANCE, VectorXYZ
 from tests.unit.frameworks.models.fakes.cmp import FakeMessage
 from tests.unit.frameworks.utils.spatial_arithmetics_test import (
@@ -63,6 +63,9 @@ from tests.unit.frameworks.utils.spatial_arithmetics_test import (
 )
 
 AGENT_ID = AgentID("agent_id_0")
+DEFAULT_GAZE_DIRECTION = GazeDirection(
+    np.array([[1.0, 0.0, 0.0], [np.nan, np.nan, np.nan], [np.nan, np.nan, np.nan]])
+)
 
 
 class SurfacePolicyCurvatureInformedTest(unittest.TestCase):
@@ -83,8 +86,8 @@ class SurfacePolicyCurvatureInformedTest(unittest.TestCase):
         self.percept = Message(
             location=self.location,
             morphological_features={
-                "pose_vectors": np.array(
-                    [self.tangent_norm.tolist(), [1, 0, 0], [0, 0, -1]]
+                "pose_vectors": SurfacePoseVectors(
+                    np.array([self.tangent_norm.tolist(), [1, 0, 0], [0, 0, -1]])
                 ),
                 "pose_fully_defined": True,
                 "on_object": 1,
@@ -94,7 +97,8 @@ class SurfacePolicyCurvatureInformedTest(unittest.TestCase):
                 "hsv": [0, 1, 1],
             },
             confidence=1.0,
-            use_state=True,
+            pass_message=True,
+            process_features_in_lm=True,
             sender_id="patch",
             sender_type="SM",
         )
@@ -256,21 +260,22 @@ class JumpToGoalTest(ParametrizedTestCase):
         goal_direction: np.ndarray,
         policy: JumpToGoal,
     ) -> None:
-        pose_vectors = np.zeros((3, 3))
+        pose_vectors = np.full((3, 3), np.nan)
         goal_direction = normalize(goal_direction)
         pose_vectors[0] = goal_direction
 
         goal = Goal(
             location=goal_location,
             morphological_features={
-                "pose_vectors": pose_vectors,
+                "pose_vectors": GazeDirection(pose_vectors),
                 "pose_fully_defined": True,
             },
             non_morphological_features=None,
             confidence=1.0,
-            use_state=True,
+            pass_message=True,
             sender_id="test",
             sender_type="SM",
+            process_features_in_lm=True,
             goal_tolerances=None,
             info=None,
         )
@@ -343,41 +348,37 @@ class JumpToGoalTest(ParametrizedTestCase):
         goal = Mock(
             location=np.zeros(3),
             morphological_features={
-                "pose_vectors": np.eye(3),
+                "pose_vectors": DEFAULT_GAZE_DIRECTION,
             },
         )
-        with patch(
-            "tbp.monty.frameworks.models.motor_policies.PositioningProcedure.depth_at_center"
-        ) as depth_at_center_mock:
-            depth_at_center_mock.return_value = 1.0
-            policy = JumpToGoal(self.agent_id, SensorID("view_finder"))
-            policy(
-                ctx=Mock(),
-                observations=Mock(),
-                state=pre_jump_state,
-                percept=Mock(),
-                goal=goal,
-            )
+        policy = JumpToGoal(self.agent_id, SensorID("view_finder"))
+        policy(
+            ctx=Mock(),
+            observations=Mock(),
+            state=pre_jump_state,
+            percept=Mock(),
+            goal=goal,
+        )
 
-            post_jump_goal = (
-                Mock(
-                    location=np.zeros(3),
-                    morphological_features={
-                        "pose_vectors": np.eye(3),
-                    },
-                )
-                if has_post_jump_goal
-                else None
+        post_jump_goal = (
+            Mock(
+                location=np.zeros(3),
+                morphological_features={
+                    "pose_vectors": DEFAULT_GAZE_DIRECTION,
+                },
             )
+            if has_post_jump_goal
+            else None
+        )
 
-            observations = Mock()
-            policy_result = policy(
-                ctx=Mock(),
-                observations=observations,
-                state=self.motor_system_state,
-                percept=Mock(),
-                goal=post_jump_goal,
-            )
+        post_jump_percept = Mock(get_on_object=Mock(return_value=False))
+        policy_result = policy(
+            ctx=Mock(),
+            observations=Mock(),
+            state=self.motor_system_state,
+            percept=post_jump_percept,
+            goal=post_jump_goal,
+        )
 
         assert isinstance(policy_result, MotorPolicyResult)
         self.assertEqual(policy_result.status, PolicyStatus.READY)
@@ -399,11 +400,7 @@ class JumpToGoalTest(ParametrizedTestCase):
             qt.as_float_array(sensor_state.rotation),
         )
 
-        depth_at_center_mock.assert_called_once_with(
-            agent_id=self.agent_id,
-            observations=observations,
-            sensor_id=SensorID("view_finder"),
-        )
+        post_jump_percept.get_on_object.assert_called_once_with()
 
     @given(
         goal_location=vectors_3d(min_value=-1, max_value=1, dtype=np.float64),
@@ -416,31 +413,26 @@ class JumpToGoalTest(ParametrizedTestCase):
             sensor_id=st.just(SensorID("view_finder")),
         ),
     )
-    @patch(
-        "tbp.monty.frameworks.models.motor_policies.PositioningProcedure.depth_at_center",
-        return_value=0.99,
-    )
     def test_returns_new_jump_actions_status_in_progress_if_undo_is_not_needed_after_jump_and_goal_is_provided(  # noqa: E501
         self,
-        depth_at_center_mock: Mock,
         goal_location: np.ndarray,
         goal_direction: np.ndarray,
         policy: JumpToGoal,
     ) -> None:
-        pose_vectors = np.zeros((3, 3))
+        pose_vectors = np.full((3, 3), np.nan)
         goal_direction = normalize(goal_direction)
         pose_vectors[0] = goal_direction
 
         first_goal = Mock(
             location=np.zeros(3),
             morphological_features={
-                "pose_vectors": np.eye(3),
+                "pose_vectors": DEFAULT_GAZE_DIRECTION,
             },
         )
         second_goal = Mock(
             location=goal_location,
             morphological_features={
-                "pose_vectors": pose_vectors,
+                "pose_vectors": GazeDirection(pose_vectors),
             },
         )
 
@@ -451,12 +443,12 @@ class JumpToGoalTest(ParametrizedTestCase):
             percept=Mock(),
             goal=first_goal,
         )
-        observations = Mock()
+        post_jump_percept = Mock(get_on_object=Mock(return_value=True))
         policy_result = policy(
             ctx=Mock(),
-            observations=observations,
+            observations=Mock(),
             state=self.motor_system_state,
-            percept=Mock(),
+            percept=post_jump_percept,
             goal=second_goal,
         )
         assert isinstance(policy_result, MotorPolicyResult)
@@ -491,24 +483,15 @@ class JumpToGoalTest(ParametrizedTestCase):
             atol=DEFAULT_TOLERANCE,
         )
 
-        depth_at_center_mock.assert_called_once_with(
-            agent_id=self.agent_id,
-            observations=observations,
-            sensor_id=SensorID("view_finder"),
-        )
+        post_jump_percept.get_on_object.assert_called_once_with()
 
-    @patch(
-        "tbp.monty.frameworks.models.motor_policies.PositioningProcedure.depth_at_center",
-        return_value=0.99,
-    )
     def test_returns_no_actions_status_ready_if_undo_is_not_needed_after_jump_and_goal_is_none(  # noqa: E501
         self,
-        depth_at_center_mock: Mock,
     ) -> None:
         goal = Mock(
             location=np.zeros(3),
             morphological_features={
-                "pose_vectors": np.eye(3),
+                "pose_vectors": DEFAULT_GAZE_DIRECTION,
             },
         )
 
@@ -520,24 +503,20 @@ class JumpToGoalTest(ParametrizedTestCase):
             percept=Mock(),
             goal=goal,
         )
-        observations = Mock()
+        post_jump_percept = Mock(get_on_object=Mock(return_value=True))
 
         policy_result = policy(
             ctx=Mock(suppress_runtime_errors=False),
-            observations=observations,
+            observations=Mock(),
             state=self.motor_system_state,
-            percept=Mock(),
+            percept=post_jump_percept,
             goal=None,
         )
         assert isinstance(policy_result, MotorPolicyResult)
         self.assertEqual(policy_result.status, PolicyStatus.READY)
         self.assertEqual(len(policy_result.actions), 0)
 
-        depth_at_center_mock.assert_called_once_with(
-            agent_id=self.agent_id,
-            observations=observations,
-            sensor_id=SensorID("view_finder"),
-        )
+        post_jump_percept.get_on_object.assert_called_once_with()
 
 
 class InformedPolicyRandomWalkTest(unittest.TestCase):

@@ -19,7 +19,6 @@ from tbp.monty.cmp import Message
 from tbp.monty.context import RuntimeContext
 from tbp.monty.frameworks.models.abstract_monty_classes import (
     SensorModule,
-    SensorObservation,
 )
 from tbp.monty.frameworks.models.motor_system_state import (
     AgentState,
@@ -48,8 +47,10 @@ from tbp.monty.frameworks.utils.spatial_arithmetics import (
     normalize,
     project_onto_tangent_plane,
 )
+from tbp.monty.geometry import SurfacePoseVectors
 from tbp.monty.math import DEFAULT_TOLERANCE
 from tbp.monty.memento import Memento
+from tbp.monty.observations import SensorObservation
 
 logger = logging.getLogger(__name__)
 
@@ -182,7 +183,7 @@ class TwoDSensorModule(SensorModule):
 
         Returns:
             Message with features and morphological features. Noise may be added.
-            use_state flag may be set.
+            The `pass_message` and `process_features_in_lm` flags may be set.
         """
         if self.state and self.save_raw_obs and not self.is_exploring:
             self._snapshot_telemetry.raw_observation(
@@ -196,10 +197,10 @@ class TwoDSensorModule(SensorModule):
 
         curvature_pose_vectors = None
         true_surface_normal = None
-        if observed_state.use_state and observed_state.get_on_object():
+        if observed_state.process_features_in_lm and observed_state.get_on_object():
             # pose_vectors are only present when the patch center is on the object.
-            curvature_pose_vectors = observed_state.get_pose_vectors().copy()
-            true_surface_normal = observed_state.get_surface_normal().copy()
+            curvature_pose_vectors = observed_state.get_pose_vectors()
+            true_surface_normal = observed_state.surface_normal().copy()
 
             self._update_tangent_frame(true_surface_normal)
             if self._extract_edges:
@@ -209,13 +210,10 @@ class TwoDSensorModule(SensorModule):
                     true_surface_normal,
                 )
 
-        if observed_state.use_state:
-            observed_state = self._message_noise(observed_state, rng=ctx.rng)
+        observed_state = self._message_noise(observed_state, rng=ctx.rng)
 
         if motor_only_step:
-            # Set interesting-features flag to False, as should not be passed to
-            # LM, even in e.g. pre-training experiments that might otherwise do so
-            observed_state.use_state = False
+            observed_state.pass_message = False
 
         observed_state = self._update_2d_position_and_displacement(
             observed_state, curvature_pose_vectors, true_surface_normal
@@ -297,7 +295,7 @@ class TwoDSensorModule(SensorModule):
     def _update_2d_position_and_displacement(
         self,
         observed_state: Message,
-        pose_3d: np.ndarray | None,
+        pose_3d: SurfacePoseVectors | None,
         surface_normal_3d: np.ndarray | None,
     ) -> Message:
         """Project the 3D step onto the tangent plane to get a 2D displacement.

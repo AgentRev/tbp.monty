@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import logging
 from enum import Enum
-from typing import Any, ClassVar, Protocol
+from typing import Any, ClassVar, Protocol, cast
 
 import numpy as np
 import quaternion as qt
@@ -21,7 +21,6 @@ from tbp.monty.cmp import Message
 from tbp.monty.context import RuntimeContext
 from tbp.monty.frameworks.models.abstract_monty_classes import (
     SensorModule,
-    SensorObservation,
 )
 from tbp.monty.frameworks.models.motor_system_state import (
     AgentState,
@@ -36,9 +35,13 @@ from tbp.monty.frameworks.utils.sensor_processing import (
     surface_normal_ordinary_least_squares,
     surface_normal_total_least_squares,
 )
-from tbp.monty.frameworks.utils.spatial_arithmetics import get_angle
-from tbp.monty.geometry import Rotation
+from tbp.monty.frameworks.utils.spatial_arithmetics import (
+    get_angle,
+    rotate_pose_vectors,
+)
+from tbp.monty.geometry import Rotation, SurfacePoseVectors
 from tbp.monty.memento import Memento
+from tbp.monty.observations import SensorObservation
 
 __all__ = [
     "CameraSM",
@@ -49,7 +52,6 @@ __all__ = [
     "ObservationProcessor",
     "PassthroughPerceptFilter",
     "PerceptFilter",
-    "Probe",
     "SnapshotTelemetry",
     "SurfaceNormalMethod",
 ]
@@ -240,18 +242,13 @@ class ObservationProcessor:
             morphological_features["on_object"] = float(on_object)
 
         # Sensor module returns features at a location in the form of a Message class.
-        # use_state is a bool indicating whether the input is "interesting",
-        # which indicates that it merits processing by the learning module; by default
-        # it will always be True so long as the surface normal and principal curvature
-        # directions were valid; certain SMs and policies used separately can also set
-        # it to False under appropriate conditions
-
         percept = Message(
             location=np.array([x, y, z]),
             morphological_features=morphological_features,
             non_morphological_features=features,
             confidence=1.0,
-            use_state=on_object and valid_signals,
+            pass_message=True,
+            process_features_in_lm=on_object and valid_signals,
             sender_id=self._sensor_module_id,
             sender_type="SM",
         )
@@ -298,12 +295,14 @@ class ObservationProcessor:
             pose_fully_defined = True
 
         morphological_features: dict[str, Any] = {
-            "pose_vectors": np.vstack(
-                [
-                    surface_normal,
-                    dir1,
-                    dir2,
-                ]
+            "pose_vectors": SurfacePoseVectors(
+                np.vstack(
+                    [
+                        surface_normal,
+                        dir1,
+                        dir2,
+                    ]
+                )
             ),
             "pose_fully_defined": pose_fully_defined,
         }
@@ -384,62 +383,6 @@ class ObservationProcessor:
         return surface_normal, valid_sn
 
 
-class Probe(SensorModule):
-    """A probe that can be inserted into Monty in place of a sensor module.
-
-    It will track raw observations for logging, and can be used by experiments
-    for positioning procedures, visualization, etc.
-
-    What distinguishes a probe from a sensor module is that it does not process
-    observations and does not emit a Cortical Message.
-    """
-
-    def __init__(self, sensor_module_id: str, save_raw_obs: bool) -> None:
-        """Initialize the probe.
-
-        Args:
-            rng: Random number generator. Unused.
-            sensor_module_id: Name of sensor module.
-            save_raw_obs: Whether to save raw sensory input for logging.
-        """
-        super().__init__()
-
-        self.is_exploring = False
-        self.sensor_module_id = sensor_module_id
-        self.state: SensorState | None = None
-        self.save_raw_obs = save_raw_obs
-
-        self._snapshot_telemetry = SnapshotTelemetry()
-
-    def state_dict(self) -> Memento:
-        return self._snapshot_telemetry.state_dict()
-
-    def update_state(self, agent: AgentState) -> None:
-        sensor = agent.sensors[SensorID(self.sensor_module_id)]
-        self.state = SensorState(
-            position=agent.position
-            + qt.rotate_vectors(agent.rotation, sensor.position),
-            rotation=agent.rotation * sensor.rotation,
-        )
-
-    def step(
-        self,
-        ctx: RuntimeContext,  # noqa: ARG002
-        observation: SensorObservation,
-        motor_only_step: bool = False,  # noqa: ARG002
-    ) -> None:
-        if self.save_raw_obs and not self.is_exploring:
-            self._snapshot_telemetry.raw_observation(
-                observation, self.state.rotation, self.state.position
-            )
-
-        return None
-
-    def reset(self) -> None:
-        self._snapshot_telemetry.reset()
-        self.is_exploring = False
-
-
 class MessageNoise(Protocol):
     def __call__(self, percept: Message, rng: np.random.RandomState) -> Message: ...
 
@@ -478,7 +421,7 @@ class DefaultMessageNoise(MessageNoise):
         Returns:
             Percept with noise added.
         """
-        if "features" in self.noise_params:
+        if "features" in self.noise_params and percept.process_features_in_lm:
             for key in self.noise_params["features"]:
                 if key in percept.morphological_features:
                     if key == "pose_vectors":
@@ -492,8 +435,8 @@ class DefaultMessageNoise(MessageNoise):
                         noise_rotation = Rotation.from_euler(
                             "xyz", noise_angles, degrees=True
                         )
-                        percept.morphological_features[key] = noise_rotation.apply(
-                            percept.morphological_features[key]
+                        percept.morphological_features[key] = rotate_pose_vectors(
+                            percept.morphological_features[key], noise_rotation
                         )
                     else:
                         percept.morphological_features[key] = (
@@ -647,7 +590,7 @@ class CameraSM(SensorModule):
 
         Returns:
             Percept with features and morphological features. Noise may be
-            added. The `use_state` flag may be set.
+            added. The `pass_message` and `process_features_in_lm` flags may be set.
         """
         if self.save_raw_obs and not self.is_exploring:
             self._snapshot_telemetry.raw_observation(
@@ -655,12 +598,10 @@ class CameraSM(SensorModule):
             )
 
         percept = self._observation_processor.process(observation)
-
-        if percept.use_state:
-            percept = self._message_noise(percept, rng=ctx.rng)
+        percept = self._message_noise(percept, rng=ctx.rng)
 
         if motor_only_step:
-            percept.use_state = False
+            percept.pass_message = False
 
         percept = self._percept_filter(percept)
 
@@ -677,7 +618,7 @@ class PerceptFilter(Protocol):
 
 class PassthroughPerceptFilter(PerceptFilter):
     def __call__(self, percept: Message) -> Message:
-        """Passthrough percept filter. Never sets `percept.use_state` to False.
+        """Passthrough percept filter.
 
         Returns:
             Percept unchanged.
@@ -698,7 +639,7 @@ class FeatureChangeFilter(PerceptFilter):
         """Reset buffer and is_exploring flag."""
         self._last_percept = None
 
-    def _check_feature_change(self, percept: Message) -> bool:
+    def _feature_changes_are_significant(self, percept: Message) -> bool:
         """Check feature change between last transmitted observation.
 
         Args:
@@ -746,9 +687,11 @@ class FeatureChangeFilter(PerceptFilter):
                         return True
 
             elif feature == "pose_vectors":
+                last_pose_vectors = cast("SurfacePoseVectors", last_feat)
+                current_pose_vectors = cast("SurfacePoseVectors", current_feat)
                 angle_between = get_angle(
-                    last_feat[0],
-                    current_feat[0],
+                    last_pose_vectors.surface_normal,
+                    current_pose_vectors.surface_normal,
                 )
                 if angle_between >= self._delta_thresholds[feature][0]:
                     logger.debug(
@@ -769,19 +712,24 @@ class FeatureChangeFilter(PerceptFilter):
         return False
 
     def __call__(self, percept: Message) -> Message:
-        """Sets `percept.use_state` to False if features haven't changed significantly.
+        """Labels each percept as containing features or location-only.
+
+        Sets `process_features_in_lm` to `True` when feature changes are significant
+        compared to the previous `percept`.
 
         Args:
             percept: Percept to check for feature change.
 
         Returns:
-            Percept with `percept.use_state` set to False if features haven't
-            changed significantly.
+            Percept with `process_features_in_lm` set to whether the features changed
+            significantly.
         """
-        if not percept.use_state:
-            # If we already know the features are uninteresting (e.g. invalid surface
-            # normal due to <3/4 of the object in view, or motor only-step), then
-            # don't bother with the below
+        if not percept.pass_message:
+            return percept
+
+        if not percept.process_features_in_lm:
+            # The features are uninteresting (e.g. off object, or invalid surface
+            # normal due to <3/4 of the object in view).
             return percept
 
         if not self._last_percept:  # first step
@@ -789,14 +737,9 @@ class FeatureChangeFilter(PerceptFilter):
             self._last_sent_n_steps_ago = 0
             return percept
 
-        significant_feature_change = self._check_feature_change(percept)
-
-        # Save bool which will tell us whether to pass the information to LMs
-        percept.use_state = significant_feature_change
-
+        significant_feature_change = self._feature_changes_are_significant(percept)
+        percept.process_features_in_lm = significant_feature_change
         if significant_feature_change:
-            # As per original implementation : only update the "last feature" when a
-            # significant change has taken place
             self._last_percept = percept
             self._last_sent_n_steps_ago = 0
         else:

@@ -10,7 +10,7 @@
 from __future__ import annotations
 
 import unittest
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 from unittest.mock import Mock, sentinel
 
 import numpy as np
@@ -18,12 +18,16 @@ import quaternion as qt
 
 from tbp.monty.cmp import Message
 from tbp.monty.context import RuntimeContext
-from tbp.monty.frameworks.models.abstract_monty_classes import SensorObservation
 from tbp.monty.frameworks.models.motor_system_state import AgentState, SensorState
 from tbp.monty.frameworks.models.two_d_sensor_module import TwoDSensorModule
 from tbp.monty.frameworks.sensors import SensorID
-from tbp.monty.frameworks.utils.edge_detection import DEFAULT_POSE_2D, EdgeFeatures
+from tbp.monty.frameworks.utils.edge_detection import (
+    DEFAULT_SURFACE_POSE_VECTORS_2D,
+    EdgeFeatures,
+)
+from tbp.monty.geometry import SurfacePoseVectors
 from tbp.monty.math import DEFAULT_TOLERANCE
+from tbp.monty.observations import SensorObservation
 from tests.unit.frameworks.utils.edge_detection_test import (
     PATCH_SIZE,
     sensor_observation,
@@ -37,24 +41,25 @@ DEFAULT_FEATURES = [
     "coherence",
 ]
 SURFACE_NORMAL_3D = np.array([0.0, 0.0, 1.0])
-FLAT_SURFACE_POSE = DEFAULT_POSE_2D
+FLAT_SURFACE_POSE_VECTORS = DEFAULT_SURFACE_POSE_VECTORS_2D
 
 
 def make_message(
     location: np.ndarray | None = None,
     on_object: bool = True,
-    use_state: bool = True,
-    pose_vectors: np.ndarray | None = None,
+    pass_message: bool = True,
+    process_features_in_lm: bool = True,
+    pose_vectors: SurfacePoseVectors | None = None,
     pose_fully_defined: bool = False,
     principal_curvatures: np.ndarray | None = None,
     non_morphological_features: dict | None = None,
     sender_id: str = "patch",
-    sender_type: str = "SM",
+    sender_type: Literal["SM", "LM"] = "SM",
 ):
     if location is None:
         location = np.array([0.0, 0.0, 0.0])
     if pose_vectors is None:
-        pose_vectors = np.identity(3)
+        pose_vectors = DEFAULT_SURFACE_POSE_VECTORS_2D
     if principal_curvatures is None:
         principal_curvatures = np.zeros(2)
 
@@ -74,7 +79,8 @@ def make_message(
         morphological_features=morphological_features,
         non_morphological_features=non_morphological_features,
         confidence=1.0,
-        use_state=use_state,
+        pass_message=pass_message,
+        process_features_in_lm=process_features_in_lm,
         sender_id=sender_id,
         sender_type=sender_type,
     )
@@ -161,7 +167,7 @@ class TwoDSensorModuleInitTest(unittest.TestCase):
         two_d_sm = make_2d_sm(edge_detector=Mock(return_value=make_no_edge()))
         world_location = np.array([1.0, 2.0, 3.0])
         percept = make_message(
-            location=world_location.copy(), on_object=True, use_state=True
+            location=world_location.copy(), on_object=True, pass_message=True
         )
         two_d_sm._observation_processor.process = Mock(return_value=percept)
 
@@ -182,7 +188,8 @@ class TwoDSensorModuleInitTest(unittest.TestCase):
             morphological_features={"on_object": 0.0},
             non_morphological_features={},
             confidence=1.0,
-            use_state=False,
+            pass_message=True,
+            process_features_in_lm=False,
             sender_id="test",
             sender_type="SM",
         )
@@ -194,7 +201,8 @@ class TwoDSensorModuleInitTest(unittest.TestCase):
             motor_only_step=False,
         )
 
-        assert msg.use_state is False
+        assert msg.pass_message is True
+        assert msg.process_features_in_lm is False
         assert "pose_vectors" not in msg.morphological_features
         np.testing.assert_allclose(msg.displacement["displacement"], np.zeros(3))
         assert two_d_sm._tangent_frame is None
@@ -224,10 +232,12 @@ class TwoDSensorModuleInitTest(unittest.TestCase):
         assert msg.sender_id == two_d_sm.sensor_module_id
         assert msg.sender_type == "SM"
         assert msg.confidence == 1.0
-        assert isinstance(msg.use_state, bool)
+        assert isinstance(msg.pass_message, bool)
 
         assert msg.location.shape == (3,)
-        assert msg.morphological_features["pose_vectors"].shape == (3, 3)
+        assert isinstance(
+            msg.morphological_features["pose_vectors"], SurfacePoseVectors
+        )
         assert isinstance(msg.morphological_features["pose_fully_defined"], bool)
 
 
@@ -241,8 +251,8 @@ class TwoDSensorModuleEdgeTest(unittest.TestCase):
         percept = make_message(
             location=np.array([1.0, 2.0, 3.0]),
             on_object=True,
-            use_state=True,
-            pose_vectors=np.identity(3),
+            pass_message=True,
+            pose_vectors=SurfacePoseVectors(np.identity(3)),
             pose_fully_defined=False,
             sender_id="test",
         )
@@ -274,8 +284,8 @@ class TwoDSensorModuleEdgeTest(unittest.TestCase):
         percept = make_message(
             location=np.array([1.0, 2.0, 3.0]),
             on_object=True,
-            use_state=True,
-            pose_vectors=FLAT_SURFACE_POSE,
+            pass_message=True,
+            pose_vectors=FLAT_SURFACE_POSE_VECTORS,
             pose_fully_defined=False,
             sender_id="test",
         )
@@ -316,7 +326,7 @@ class TwoDSensorModuleEdgeTest(unittest.TestCase):
         assert msg.morphological_features["pose_fully_defined"] is True
 
         np.testing.assert_allclose(
-            msg.morphological_features["pose_vectors"],
+            msg.morphological_features["pose_vectors"].value,
             np.array(
                 [
                     [0.0, 0.0, 1.0],
@@ -341,13 +351,13 @@ class TwoDSensorModuleEdgeTest(unittest.TestCase):
         two_d_sm = make_2d_sm(edge_detector=edge_detector)
         two_d_sm._update_tangent_frame(surface_normal_3d=SURFACE_NORMAL_3D)
         percept = make_message()
-        original_pose = percept.morphological_features["pose_vectors"].copy()
+        original_pose = percept.morphological_features["pose_vectors"].value.copy()
 
         msg = two_d_sm._extract_2d_edge(percept, observation, SURFACE_NORMAL_3D)
 
         assert msg.morphological_features["pose_fully_defined"] is False
         np.testing.assert_allclose(
-            msg.morphological_features["pose_vectors"], original_pose
+            msg.morphological_features["pose_vectors"].value, original_pose
         )
         assert msg.non_morphological_features["edge_strength"] == 0.0
         assert msg.non_morphological_features["coherence"] == 0.0
@@ -369,13 +379,13 @@ class TwoDSensorModuleEdgeTest(unittest.TestCase):
         two_d_sm = make_2d_sm(edge_detector=edge_detector)
         two_d_sm._update_tangent_frame(surface_normal_3d=SURFACE_NORMAL_3D)
         percept = make_message()
-        original_pose = percept.morphological_features["pose_vectors"].copy()
+        original_pose = percept.morphological_features["pose_vectors"].value.copy()
 
         msg = two_d_sm._extract_2d_edge(percept, observation, SURFACE_NORMAL_3D)
 
         assert msg.morphological_features["pose_fully_defined"] is False
         np.testing.assert_allclose(
-            msg.morphological_features["pose_vectors"], original_pose
+            msg.morphological_features["pose_vectors"].value, original_pose
         )
 
         assert msg.non_morphological_features["edge_strength"] == 0.0
@@ -388,19 +398,23 @@ class TwoDSensorModuleTangentFrameTest(unittest.TestCase):
         first_normal = np.array([0.0, 0.0, 1.0])
         second_normal = np.array([0.0, np.sqrt(0.5), np.sqrt(0.5)])
 
-        first_pose = np.array(
-            [
-                first_normal,
-                [1.0, 0.0, 0.0],
-                [0.0, 1.0, 0.0],
-            ]
+        first_pose = SurfacePoseVectors(
+            np.array(
+                [
+                    first_normal,
+                    [1.0, 0.0, 0.0],
+                    [0.0, 1.0, 0.0],
+                ]
+            )
         )
-        second_pose = np.array(
-            [
-                second_normal,
-                [1.0, 0.0, 0.0],
-                [0.0, np.sqrt(0.5), -np.sqrt(0.5)],
-            ]
+        second_pose = SurfacePoseVectors(
+            np.array(
+                [
+                    second_normal,
+                    [1.0, 0.0, 0.0],
+                    [0.0, np.sqrt(0.5), -np.sqrt(0.5)],
+                ]
+            )
         )
 
         two_d_sm._observation_processor.process = Mock(
@@ -409,13 +423,13 @@ class TwoDSensorModuleTangentFrameTest(unittest.TestCase):
                     location=np.array([0.0, 0.0, 0.0]),
                     pose_vectors=first_pose,
                     on_object=True,
-                    use_state=True,
+                    pass_message=True,
                 ),
                 make_message(
                     location=np.array([1.0, 0.0, 0.0]),
                     pose_vectors=second_pose,
                     on_object=True,
-                    use_state=True,
+                    pass_message=True,
                 ),
             ]
         )
@@ -454,8 +468,8 @@ class TwoDSensorModuleTangentFrameTest(unittest.TestCase):
             make_message(
                 location=location.copy(),
                 on_object=True,
-                use_state=True,
-                pose_vectors=FLAT_SURFACE_POSE,
+                pass_message=True,
+                pose_vectors=FLAT_SURFACE_POSE_VECTORS,
             )
             for location in locations
         ]

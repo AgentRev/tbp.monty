@@ -14,6 +14,7 @@ import pytest
 from tbp.monty.cmp import Message
 from tbp.monty.context import RuntimeContext
 from tbp.monty.frameworks.actions.actions import Action
+from tbp.monty.geometry import SurfacePoseVectors
 from tbp.monty.hydra import instantiate_experiment
 from tests import HYDRA_ROOT
 
@@ -184,7 +185,7 @@ class GraphLearningTest(BaseGraphTest):
                     len(
                         exp.model.learning_modules[
                             0
-                        ].buffer.get_all_locations_on_object(input_channel="first")
+                        ].buffer.get_all_locations_on_object()
                     ),
                     "buffer does not contain the right amount of locations.",
                 )
@@ -344,7 +345,7 @@ class GraphLearningTest(BaseGraphTest):
                     exp.pre_epoch()
                 if episode_num >= 2:
                     # Set max steps low & raise mmd to get pose time outs
-                    exp.max_train_steps = 3
+                    exp._recognition_policy._max_train_steps = 3
                     if exp._recreation_mode:
                         lm_cfg = exp._monty_cfg["learning_modules"]["learning_module_0"]
                         lm_cfg["max_match_distance"] = 0.1
@@ -467,11 +468,7 @@ class GraphLearningTest(BaseGraphTest):
             # the object that we return to
             exp.run()
             self.assertEqual(
-                len(
-                    exp.model.learning_modules[0].buffer.get_all_locations_on_object(
-                        input_channel="patch"
-                    )
-                ),
+                len(exp.model.learning_modules[0].buffer.get_all_locations_on_object()),
                 len(
                     exp.model.learning_modules[0].buffer.get_all_features_on_object()[
                         "patch"
@@ -509,7 +506,7 @@ class GraphLearningTest(BaseGraphTest):
                 "on object",
             )
 
-    def test_detailed_logging(self):
+    def test_detailed_logging(self) -> None:
         exp = instantiate_experiment(self.feature_pred_off_object_cfg.experiment)
         with exp:
             exp.run()
@@ -598,7 +595,7 @@ class GraphLearningTest(BaseGraphTest):
         graph_lm.detected_object = obj_name
         graph_lm.detected_rotation_r = None
         graph_lm.buffer.stats["detected_location_rel_body"] = (
-            graph_lm.buffer.get_current_location(input_channel="first")
+            graph_lm.buffer.current_location()
         )
 
         graph_lm.update_ltm_from_stm()
@@ -859,8 +856,8 @@ class GraphLearningTest(BaseGraphTest):
     def test_different_pose_features_not_recognized(self):
         """Test that the object is not recognized if pose features don't match."""
         fake_obs_test = copy.deepcopy(self.fake_obs_learn)
-        fake_obs_test[0].morphological_features["pose_vectors"] = np.array(
-            [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+        fake_obs_test[0].morphological_features["pose_vectors"] = SurfacePoseVectors(
+            np.array([[1, 0, 0], [0, 1, 0], [0, 0, 1]])
         )
 
         graph_lm = self.get_gm_with_fake_object()
@@ -886,13 +883,13 @@ class GraphLearningTest(BaseGraphTest):
     def test_moving_off_object_and_back(self):
         """Test that the object is still recognized after moving off the object.
 
-        TODO: since the monty class checks use_state in combine_inputs it doesn't make
-        much sense to test this here anymore with an isolated LM.
+        TODO: since the monty class checks pass_message in combine_inputs it doesn't
+        make much sense to test this here anymore with an isolated LM.
         """
         fake_obs_test = copy.deepcopy(self.fake_obs_learn)
         fake_obs_test[1].location = [1, 2, 1]
         fake_obs_test[1].morphological_features["on_object"] = 0
-        fake_obs_test[1].use_state = False
+        fake_obs_test[1].pass_message = False
 
         graph_lm = self.get_gm_with_fake_object()
 
@@ -900,7 +897,7 @@ class GraphLearningTest(BaseGraphTest):
         graph_lm.reset_stm()
         graph_lm.fixme_reset_ground_truth(primary_target=self.placeholder_target)
         for observation in fake_obs_test:
-            if not observation.use_state:
+            if not observation.pass_message:
                 pass
             else:
                 graph_lm.matching_step(self.ctx, [observation])
@@ -991,7 +988,6 @@ class GraphLearningTest(BaseGraphTest):
                     monty._vote()
                     monty._pass_goals()
                     monty._set_step_type_and_check_if_done()
-                    monty._post_step()
                 exp.post_episode(num_steps)
             exp.post_epoch()
 
