@@ -15,14 +15,16 @@ import pandas as pd
 import wandb
 from sklearn.preprocessing import LabelEncoder
 
+from tbp.monty.frameworks.experiments.logger_args import LoggerArgs
 from tbp.monty.frameworks.experiments.mode import ExperimentMode
 from tbp.monty.frameworks.loggers.exp_logger import BaseMontyLogger
-from tbp.monty.frameworks.models.monty_base import MontyBase
+from tbp.monty.frameworks.models.abstract_monty_classes import Monty
 from tbp.monty.frameworks.utils.logging_utils import (
     get_stats_per_lm,
     target_data_to_dict,
     total_size,
 )
+from tbp.monty.telemetry.episode import subscribers
 
 """
 Loggers define a pool of data in the attribute self.data. The job of loggers is to
@@ -47,7 +49,7 @@ content is structured data. Perhaps the term DataReporter is more apt.
 NOTE: previously, we updated the data pool every episode, and logged at most once per
 episode. Reporting and flushing frequency were based on the size of self.data. To make
 things easier to think about for handlers, we moved reporting and flushing both to take
-place at the end of an episode. Why all the callbacks then, like post_step, post_train,
+place at the end of an episode. Why all the callbacks then, like post_train,
 etc.? We are building a plane while flying it. Best not to throw the landing gear out
 the window just because it isn't being used right now.
 """
@@ -88,11 +90,8 @@ class BasicGraphMatchingLogger(BaseMontyLogger):
             num_time_out=0,
             num_patch_off_object=0,
             num_no_label=0,
-            num_consistent_child_obj=0,
-            num_correct_child_or_parent=0,
             num_correct_per_lm=0,
             num_correct_mlh_per_lm=0,
-            num_consistent_child_obj_per_lm=0,
             num_no_match_per_lm=0,
             num_confused_per_lm=0,
             num_confused_mlh_per_lm=0,
@@ -148,7 +147,6 @@ class BasicGraphMatchingLogger(BaseMontyLogger):
             "no_label",
             "pose_time_out",
             "time_out",
-            "consistent_child_obj",  # also counted if LM didn't converge
             "confused_mlh",
             "correct_mlh",
             "no_match",
@@ -178,20 +176,28 @@ class BasicGraphMatchingLogger(BaseMontyLogger):
             DETAILED={},
         )
 
-    def log_episode(self, logger_args, output_dir, model):  # noqa: ARG002
-        # mode = model.experiment_mode
-        # episode = logger_args[f"{mode}_episodes"]
+    def log_episode(
+        self, logger_args: LoggerArgs, output_dir: str, model: Monty
+    ) -> None:
+        mode = model.experiment_mode
+        episode = (
+            logger_args.train_episodes
+            if mode is ExperimentMode.TRAIN
+            else logger_args.eval_episodes
+        )
 
-        # TODO telemetry: temporarily commented out to test PostEpisodeTelemetryConsumer
+        # TODO telemetry: temporarily commented to test EpisodeTelemetryHandler
         # for handler in self.handlers:
         #     handler.report_episode(self.data, output_dir, episode, mode)
+
+        subscribers.old_logger_data = self.data  # TODO: remove!
 
         if not self.use_parallel_wandb_logging:
             # when logging in parallel to wandb we need to wait with flushing
             # until the parallel run script has retrieved the episode stats.
             self.flush()
 
-    def maybe_log(self, logger_args, output_dir, model):
+    def maybe_log(self, logger_args: LoggerArgs, output_dir: str, model: Monty) -> None:
         """Left here in case we go back to size based logging.
 
         Remove if not used after code has stabilized.
@@ -200,35 +206,50 @@ class BasicGraphMatchingLogger(BaseMontyLogger):
         if total_size(self.data) > 10_000_000:
             self.log(logger_args, output_dir, model)
 
-    def post_episode(self, logger_args, output_dir, model):
+    def post_episode(
+        self, logger_args: LoggerArgs, output_dir: str, model: Monty
+    ) -> None:
         self.update_episode_data(logger_args, model)
         self.log_episode(logger_args, output_dir, model)
 
-    def update_episode_data(self, logger_args, model: MontyBase):
+    def update_episode_data(self, logger_args: LoggerArgs, model: Monty) -> None:
         """Run get_stats_per_lm and add to overall stats.
 
         Store stats ~
             1 (episode)
                 lm_0 (which lm)
                     stats
+
+        Raises:
+            ValueError: If logger_args.target is None.
         """
+        if logger_args.target is None:
+            raise ValueError("logger_args.target cannot be None.")
+
         performance_dict = get_stats_per_lm(
-            model, logger_args["target"], logger_args["episode_seed"]
+            model,
+            logger_args.episode_steps,
+            logger_args.target,
+            logger_args.episode_seed,
         )
-        target_dict = target_data_to_dict(logger_args["target"])
+        target_dict = target_data_to_dict(logger_args.target)
         if len(self.lms) == 0:  # first time function is called
             for lm in performance_dict:
                 if lm.startswith("LM_"):
                     self.lms.append(lm)
 
         mode = model.experiment_mode
-        episode = logger_args[f"{mode}_episodes"]
+        episode = (
+            logger_args.train_episodes
+            if mode is ExperimentMode.TRAIN
+            else logger_args.eval_episodes
+        )
         actions = model.motor_system.action_sequence
-        logger_time = {k: v for k, v in logger_args.items() if k != "target"}
+        logger_time = {k: v for k, v in logger_args.__dict__.items() if k != "target"}
         self.data["BASIC"][f"{mode}_stats"][episode] = performance_dict
 
         self.update_overall_stats(
-            mode, episode, model.episode_steps, model.matching_steps
+            mode, episode, logger_args.episode_steps, model.matching_steps
         )
         overall_stats = self.get_formatted_overall_stats(mode, episode)
 
@@ -273,9 +294,6 @@ class BasicGraphMatchingLogger(BaseMontyLogger):
                 stats["episode_avg_prediction_error"].append(
                     episode_stats["episode_avg_prediction_error"]
                 )
-
-            if performance in {"consistent_child_obj", "correct", "correct_mlh"}:
-                stats["num_correct_child_or_parent"] += 1
 
             stats["goal_states_attempted"] = episode_stats["goal_states_attempted"]
 
@@ -397,15 +415,6 @@ class BasicGraphMatchingLogger(BaseMontyLogger):
                 if len(stats["episode_avg_prediction_error"]) > 0
                 else np.nan
             ),
-            "overall/percent_consistent_child_obj": (
-                stats["num_consistent_child_obj"] / (stats["num_episodes"])
-            )
-            * 100,
-            "overall/percent_correct_child_or_parent": (
-                stats["num_correct_child_or_parent"]
-                / (stats["num_episodes"] * len(self.lms))
-            )
-            * 100,
             "overall/run_time": np.sum(stats["run_times"]) / len(self.lms),
             # NOTE: does not take into account different runtimes with multiple LMs
             "overall/avg_episode_run_time": (
@@ -423,12 +432,6 @@ class BasicGraphMatchingLogger(BaseMontyLogger):
             "episode/confused_mlh": stats["episode_confused_mlh"],
             "episode/pose_time_out": stats["episode_pose_time_out"],
             "episode/time_out": stats["episode_time_out"],
-            "episode/consistent_child_obj": stats["episode_consistent_child_obj"],
-            "episode/consistent_child_or_parent": (
-                stats["episode_consistent_child_obj"]
-                or stats["episode_correct"]
-                or stats["episode_correct_mlh"]
-            ),
             "episode/used_mlh_after_time_out": stats["episode_correct_mlh"]
             or stats["episode_confused_mlh"],
             "episode/rotation_error": (
@@ -529,9 +532,15 @@ class DetailedGraphMatchingLogger(BasicGraphMatchingLogger):
         self.train_episodes_to_total = {}
         self.eval_episodes_to_total = {}
 
-    def log_episode(self, logger_args, output_dir, model):
+    def log_episode(
+        self, logger_args: LoggerArgs, output_dir: str, model: Monty
+    ) -> None:
         mode = model.experiment_mode
-        episode = logger_args[f"{mode}_episodes"]
+        episode = (
+            logger_args.train_episodes
+            if mode is ExperimentMode.TRAIN
+            else logger_args.eval_episodes
+        )
         kwargs = dict(
             train_episodes_to_total=self.train_episodes_to_total,
             eval_episodes_to_total=self.eval_episodes_to_total,
@@ -542,11 +551,13 @@ class DetailedGraphMatchingLogger(BasicGraphMatchingLogger):
 
         self.flush()
 
-    def post_episode(self, logger_args, output_dir, model):
+    def post_episode(
+        self, logger_args: LoggerArgs, output_dir: str, model: Monty
+    ) -> None:
         self.update_episode_data(logger_args, model)
         self.log_episode(logger_args, output_dir, model)
 
-    def update_episode_data(self, logger_args, model):
+    def update_episode_data(self, logger_args: LoggerArgs, model: Monty) -> None:
         """Add episode data to overall buffer_data dict.
 
         Store stats ~
@@ -557,14 +568,14 @@ class DetailedGraphMatchingLogger(BasicGraphMatchingLogger):
         # update train / eval stats
         super().update_episode_data(logger_args, model)
 
-        episodes = logger_args["train_episodes"] + logger_args["eval_episodes"]
-        self.train_episodes_to_total[logger_args["train_episodes"]] = episodes
-        self.eval_episodes_to_total[logger_args["eval_episodes"]] = episodes
+        episodes = logger_args.train_episodes + logger_args.eval_episodes
+        self.train_episodes_to_total[logger_args.train_episodes] = episodes
+        self.eval_episodes_to_total[logger_args.eval_episodes] = episodes
 
         buffer_data = {}
         for i, lm in enumerate(model.learning_modules):
             lm_dict = {}
-            lm_dict.update(logger_args)
+            lm_dict.update(logger_args.__dict__)
             lm_dict.update({"locations": lm.buffer.locations})
             lm_dict.update(lm.buffer.features)
             lm_dict.update({"displacements": lm.buffer.displacements})
@@ -574,8 +585,12 @@ class DetailedGraphMatchingLogger(BasicGraphMatchingLogger):
             buffer_data[f"LM_{i}"] = lm_dict  # NOTE: probably same for all LMs
 
         for i, sm in enumerate(model.sensor_modules):
-            if len(sm.state_dict()["raw_observations"]) > 0:
-                buffer_data[f"SM_{i}"] = sm.state_dict()
+            state_dict = sm.state_dict()
+            if (
+                "raw_observations" in state_dict
+                and len(state_dict["raw_observations"]) > 0
+            ):
+                buffer_data[f"SM_{i}"] = state_dict
 
         # TODO ensure will work with multiple, independent sensor agents
         buffer_data["motor_system"] = {}
@@ -611,9 +626,15 @@ class SelectiveEvidenceLogger(BasicGraphMatchingLogger):
         self.train_episodes_to_total = {}
         self.eval_episodes_to_total = {}
 
-    def log_episode(self, logger_args, output_dir, model):
+    def log_episode(
+        self, logger_args: LoggerArgs, output_dir: str, model: Monty
+    ) -> None:
         mode = model.experiment_mode
-        episode = logger_args[f"{mode}_episodes"]
+        episode = (
+            logger_args.train_episodes
+            if mode is ExperimentMode.TRAIN
+            else logger_args.eval_episodes
+        )
         kwargs = dict(
             train_episodes_to_total=self.train_episodes_to_total,
             eval_episodes_to_total=self.eval_episodes_to_total,
@@ -624,18 +645,20 @@ class SelectiveEvidenceLogger(BasicGraphMatchingLogger):
 
         self.flush()
 
-    def post_episode(self, logger_args, output_dir, model):
+    def post_episode(
+        self, logger_args: LoggerArgs, output_dir: str, model: Monty
+    ) -> None:
         self.update_episode_data(logger_args, model)
         self.log_episode(logger_args, output_dir, model)
 
-    def update_episode_data(self, logger_args, model):
+    def update_episode_data(self, logger_args: LoggerArgs, model: Monty) -> None:
         """Add episode data to overall buffer_data dict."""
         # update train / eval stats
         super().update_episode_data(logger_args, model)
 
-        episodes = logger_args["train_episodes"] + logger_args["eval_episodes"]
-        self.train_episodes_to_total[logger_args["train_episodes"]] = episodes
-        self.eval_episodes_to_total[logger_args["eval_episodes"]] = episodes
+        episodes = logger_args.train_episodes + logger_args.eval_episodes
+        self.train_episodes_to_total[logger_args.train_episodes] = episodes
+        self.eval_episodes_to_total[logger_args.eval_episodes] = episodes
 
         buffer_data = {}
         for i, lm in enumerate(model.learning_modules):
@@ -656,8 +679,12 @@ class SelectiveEvidenceLogger(BasicGraphMatchingLogger):
             buffer_data[f"LM_{i}"] = lm_dict
 
         for i, sm in enumerate(model.sensor_modules):
-            if len(sm.state_dict()["raw_observations"]) > 0:
+            state_dict = sm.state_dict()
+            if (
+                "raw_observations" in state_dict
+                and len(state_dict["raw_observations"]) > 0
+            ):
                 # Only store first observation
-                buffer_data[f"SM_{i}"] = sm.state_dict()["raw_observations"][0]
+                buffer_data[f"SM_{i}"] = state_dict["raw_observations"][0]
 
         self.data["DETAILED"][episodes] = buffer_data

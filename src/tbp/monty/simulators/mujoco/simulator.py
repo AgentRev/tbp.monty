@@ -9,8 +9,10 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Sequence
+from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, Sequence
+from typing import TYPE_CHECKING, Any, Protocol, Self, override
 
 from mujoco import (
     MjData,
@@ -24,7 +26,6 @@ from mujoco import (
     mjtTexture,
     mjtTextureRole,
 )
-from typing_extensions import Self, override
 
 from tbp.monty.frameworks.actions.actions import Action
 from tbp.monty.frameworks.agents import AgentID
@@ -38,7 +39,13 @@ from tbp.monty.frameworks.models.abstract_monty_classes import Observations
 from tbp.monty.frameworks.models.motor_system_state import ProprioceptiveState
 from tbp.monty.frameworks.sensors import Resolution2D, SensorConfig, SensorID
 from tbp.monty.geometry import Rotation
-from tbp.monty.math import IDENTITY_QUATERNION, ZERO_VECTOR, QuaternionWXYZ, VectorXYZ
+from tbp.monty.math import (
+    IDENTITY_QUATERNION,
+    ONES_VECTOR,
+    ZERO_VECTOR,
+    QuaternionWXYZ,
+    VectorXYZ,
+)
 from tbp.monty.simulators.mujoco.agents import Agent
 from tbp.monty.simulators.mujoco.objects import (
     ObjectMetadata,
@@ -50,6 +57,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "DEFAULT_RESOLUTION",
+    "PRIMITIVE_OBJECTS",
     "ActuateMethodMissing",
     "DataPathNotConfigured",
     "MissingObjectModel",
@@ -60,11 +68,10 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-# Scaling factor to make MuJoCo primitives roughly the same size
-# as their Habitat counterparts. This was determined by trial and error.
 HABITAT_SCALING_FACTOR = (0.1, 0.1, 0.1)
+"""Scaling factor to make MuJoCo primitives roughly the same size
+as their Habitat counterparts. This was determined by trial and error."""
 
-# Map of names to MuJoCo primitive object types
 PRIMITIVE_OBJECTS = {
     "box": mjtGeom.mjGEOM_BOX,
     "capsule": mjtGeom.mjGEOM_CAPSULE,
@@ -72,10 +79,8 @@ PRIMITIVE_OBJECTS = {
     "ellipsoid": mjtGeom.mjGEOM_ELLIPSOID,
     "sphere": mjtGeom.mjGEOM_SPHERE,
 }
+"""Map of names to MuJoCo primitive object types"""
 
-# Define primitives with the same names as Habitat uses so we don't
-# have to define new environment interface configurations during the
-# transition period.
 # TODO: remove once Habitat is gone and the test configs are updated to use
 #   MuJoCo names for these objects.
 HABITAT_PRIMITIVE_OBJECTS = {
@@ -86,10 +91,25 @@ HABITAT_PRIMITIVE_OBJECTS = {
     # cone primitive object as an option.
     "coneSolid": mjtGeom.mjGEOM_SPHERE,
 }
+"""Define primitives with the same names as Habitat uses so we don't
+have to define new environment interface configurations during the
+transition period."""
 
-# Default rendering resolution in the event that there are no sensor
-# configurations, e.g. in tests.
 DEFAULT_RESOLUTION = Resolution2D(width=64, height=64)
+"""Default rendering resolution in the event that there are no sensor
+configurations, e.g. in tests."""
+
+LoadedObjectKey = tuple[str, VectorXYZ]
+"""Key for tracking what custom objects we've already loaded meshes for.
+Includes scale since MuJoCo stores scale on the mesh, and not the geom."""
+
+
+@dataclass
+class ModelMetadata:
+    """Dataclass to store custom object mesh and material names."""
+
+    mesh_name: str
+    material_name: str
 
 
 class MuJoCoAgentFactory(Protocol):
@@ -151,14 +171,27 @@ class MuJoCoSimulator(SimulatedObjectEnvironment):
     model: MjModel
     data: MjData
     id_to_semantic_id: dict[ObjectID, SemanticID]
+    """Mapping from internal object IDs to semantic IDs."""
 
     _data_path: Path | None
+    """Path to load custom object assets from."""
     _raise_actuate_missing: bool
+    """Whether calling a missing actuate method on a Agent should raise an exception."""
     _agent_partials: Sequence[MuJoCoAgentFactory]
+    """Partially applied Agent constructors.
+    These are expected to take a single argument, the simulator instance.
+    """
     _agents: dict[AgentID, Agent]
-    _loaded_custom_types: set[str]
+    """Dictionary of AgentIDs to Agents"""
+    _loaded_custom_types: dict[LoadedObjectKey, ModelMetadata]
+    """Dictionary of custom loaded types, used to make sure we only add custom
+    assets once."""
     _object_count: int
+    """Count of the objects added the the scene, used for generating unique names."""
+    _object_names: set[str]
+    """A set of the object names added to the scene."""
     _renderers: dict[tuple[int, int], Renderer]
+    """A dictionary cache of resolutions to Renderers."""
 
     def __init__(
         self,
@@ -176,34 +209,32 @@ class MuJoCoSimulator(SimulatedObjectEnvironment):
             raise_actuate_missing: whether to raise an exception when an agent
               does not have an actuate method for an Action.
         """
-        self.spec = MjSpec()
-        self.model = self.spec.compile()
-        self.data = MjData(self.model)
-        self.id_to_semantic_id = self._default_id_mapping()
-
         self._data_path = Path(data_path) if data_path else None
-        self._loaded_custom_types: set[str] = set()
         self._raise_actuate_missing = raise_actuate_missing
         self._renderers = {}
         self._agent_partials = [] if agents is None else agents
         self._agents = {}
-        self._create_agents()
 
-        # Track how many objects we add to the environment.
-        # This is used to give added objects unique names.
         self._object_count = 0
+        self._object_names = set()
+        self._loaded_custom_types = {}
+        self.id_to_semantic_id = self._default_id_mapping()
 
-        self._recompile()
+        self.spec = MjSpec()
+        self._configure_spec_settings()
+        self._configure_lights()
+        self._create_agents()
+        self.model = self.spec.compile()
+        self.data = MjData(self.model)
+        # Step the simulation so the agents are in their initial positions.
+        mj_forward(self.model, self.data)
 
     def _recompile(self) -> None:
         """Recompile the MuJoCo model while retaining any state data."""
-        # The spec might be new, so reset all the options
-        self._configure_spec_settings()
-        self._configure_lights()
         self.model, self.data = self.spec.recompile(self.model, self.data)
         # The renderers have to be recreated when the model is updated.
         self._close_renderers()
-        # Step the simulation so all objects are in their initial positions.
+        # Step the simulation so any newly added objects are in their initial positions.
         mj_forward(self.model, self.data)
 
     def _configure_spec_settings(self) -> None:
@@ -213,7 +244,7 @@ class MuJoCoSimulator(SimulatedObjectEnvironment):
         # Start with a default resolution in case we don't have agents and therefore
         # sensors to query, e.g. in tests.
         render_resolution = DEFAULT_RESOLUTION
-        if self._agents:
+        if self._agent_partials:
             render_resolution = self._max_sensor_resolution()
         g = self.spec.visual.global_
         g.offheight = render_resolution.height
@@ -303,12 +334,29 @@ class MuJoCoSimulator(SimulatedObjectEnvironment):
         return Resolution2D(height=max_height, width=max_width)
 
     def remove_all_objects(self) -> None:
-        self.spec = MjSpec()
-        self._create_agents()
-        self._recompile()
+        """Removes all objects from the scene.
+
+        Note: this does NOT reset the agents to their initial positions. Call
+        `reset()` to do that.
+        """
+        for name in self._object_names:
+            geom = self.spec.geom(name)
+            self.spec.delete(geom)
+        self._remove_assets()
         self.id_to_semantic_id = self._default_id_mapping()
         self._object_count = 0
-        self._loaded_custom_types = set()
+        self._object_names = set()
+        self._recompile()
+
+    def _remove_assets(self) -> None:
+        """Removes all meshes, materials, and textures for custom objects."""
+        for mesh in self.spec.meshes:
+            self.spec.delete(mesh)
+        for material in self.spec.materials:
+            self.spec.delete(material)
+        for texture in self.spec.textures:
+            self.spec.delete(texture)
+        self._loaded_custom_types = {}
 
     @override
     def add_object(
@@ -316,7 +364,7 @@ class MuJoCoSimulator(SimulatedObjectEnvironment):
         name: str,
         position: VectorXYZ = ZERO_VECTOR,
         rotation: QuaternionWXYZ = IDENTITY_QUATERNION,
-        scale: VectorXYZ = (1.0, 1.0, 1.0),
+        scale: VectorXYZ = ONES_VECTOR,
         semantic_id: SemanticID | None = None,
         primary_target_object: ObjectID | None = None,
     ) -> ObjectInfo:
@@ -348,6 +396,7 @@ class MuJoCoSimulator(SimulatedObjectEnvironment):
             semantic_id = SemanticID(added_obj.type[0])
         object_id = ObjectID(added_obj.id)
         self.id_to_semantic_id[object_id] = semantic_id
+        self._object_names.add(obj_name)
 
         return ObjectInfo(
             object_id=object_id,
@@ -377,29 +426,21 @@ class MuJoCoSimulator(SimulatedObjectEnvironment):
             rotation: Initial orientation of the object.
             scale: Initial scale of the object.
         """
-        if scale != (1.0, 1.0, 1.0):
-            # TODO: In order to support this, we need to update the
-            #  object loading code to set the scale on the "mesh" object,
-            #  which also means we need to track loaded objects with the
-            #  scale included.
-            raise NotImplementedError(
-                "Custom objects do not currently support "
-                "'scale' other than (1.0, 1.0, 1.0)."
-            )
+        object_key: LoadedObjectKey = (object_type, scale)
+        if object_key not in self._loaded_custom_types:
+            self._load_custom_object(object_key)
 
-        if object_type not in self._loaded_custom_types:
-            self._load_custom_object(object_type)
-
+        metadata = self._loaded_custom_types[object_key]
         self.spec.worldbody.add_geom(
             name=obj_name,
             type=mjtGeom.mjGEOM_MESH,
-            meshname=f"{object_type}_mesh",
-            material=f"{object_type}_mat",
+            meshname=metadata.mesh_name,
+            material=metadata.material_name,
             pos=position,
             quat=rotation,
         )
 
-    def _load_custom_object(self, object_type: str) -> None:
+    def _load_custom_object(self, object_key: LoadedObjectKey) -> None:
         """Loads a custom object from the data_path into the spec.
 
         This should only be done once per custom object type.
@@ -410,6 +451,8 @@ class MuJoCoSimulator(SimulatedObjectEnvironment):
             MissingObjectTexture: When the texture map is missing.
             MissingObjectModel: When the object is missing.
         """
+        object_type, scale = object_key
+
         if not self._data_path:
             raise DataPathNotConfigured(
                 "Cannot load custom objects in simulator, "
@@ -418,6 +461,14 @@ class MuJoCoSimulator(SimulatedObjectEnvironment):
         path = self._data_path / object_type
         texture_path = path / "texture_map.png"
         model_path = path / "textured.obj"
+
+        metadata_path = path / "metadata.json"
+        if metadata_path.exists():
+            metadata = load_object_metadata(metadata_path, object_type)
+        else:
+            metadata = ObjectMetadata()
+
+        obj_name_base = f"{object_type}_{scale[0]}_{scale[1]}_{scale[2]}"
 
         if not path.exists():
             raise UnknownObjectType(f"Unknown object type: {object_type}")
@@ -431,30 +482,38 @@ class MuJoCoSimulator(SimulatedObjectEnvironment):
         # MuJoCo doesn't seem to be able to load the referenced texture from the
         # 'texture.obj' file directly, so we have to load the texture separately and
         # create a material for it that we can add to the mesh.
+        texture_name = f"{obj_name_base}_tex"
         self.spec.add_texture(
-            name=f"{object_type}_tex",
+            name=texture_name,
             type=mjtTexture.mjTEXTURE_2D,
             file=str(texture_path),
         )
+
+        material_name = f"{obj_name_base}_mat"
         mat = self.spec.add_material(
-            name=f"{object_type}_mat",
+            name=material_name,
         )
-        mat.textures[mjtTextureRole.mjTEXROLE_RGB] = f"{object_type}_tex"
+        mat.textures[mjtTextureRole.mjTEXROLE_RGB] = texture_name
 
-        metadata_path = path / "metadata.json"
-        if metadata_path.exists():
-            metadata = load_object_metadata(metadata_path, object_type)
-        else:
-            metadata = ObjectMetadata()
+        actual_scale = (
+            scale[0] * metadata.scale[0],
+            scale[1] * metadata.scale[1],
+            scale[2] * metadata.scale[2],
+        )
 
+        mesh_name = f"{obj_name_base}_mesh"
         self.spec.add_mesh(
-            name=f"{object_type}_mesh",
+            name=mesh_name,
             file=str(model_path),
             refquat=metadata.refquat,
             refpos=metadata.refpos,
+            scale=actual_scale,
         )
 
-        self._loaded_custom_types.add(object_type)
+        self._loaded_custom_types[object_key] = ModelMetadata(
+            mesh_name=mesh_name,
+            material_name=material_name,
+        )
 
     def _add_primitive_object(
         self,
@@ -473,7 +532,7 @@ class MuJoCoSimulator(SimulatedObjectEnvironment):
             rotation: Initial orientation of the object.
             scale: Initial scale of the object.
         """
-        # In Habitat, the capsule is initially oriented with the round portions at the
+        # In Habitat, the capsule was initially oriented with the round portions at the
         # top and bottom along the vertical Y axis. MuJoCo places the capsule with the
         # round ends pointing towards and away from the agent along the Z axis.
         # To mimic Habitat's behaviour, we need to rotate the primitive object to

@@ -10,22 +10,24 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, ClassVar, Collection, Sequence
+from collections.abc import Collection, Sequence
+from typing import Any
 
 import numpy as np
+import numpy.typing as npt
 import torch
 
-from tbp.monty.cmp import Goal, Message
+from tbp.monty import telemetry
+from tbp.monty.cmp import AttentionRegion, Goal, Message, location_mean
 from tbp.monty.context import RuntimeContext
 from tbp.monty.experiment.match_criteria import MatchCriterion
+from tbp.monty.experiment.primary_target import PrimaryTarget
+from tbp.monty.experiment.recognition_status import (
+    RecognitionConclusion,
+    RecognitionStatus,
+)
 from tbp.monty.frameworks.environments.environment import SemanticID
 from tbp.monty.frameworks.experiments.mode import ExperimentMode
-from tbp.monty.frameworks.loggers.exp_logger import BaseMontyLogger
-from tbp.monty.frameworks.loggers.graph_matching_loggers import (
-    BasicGraphMatchingLogger,
-    DetailedGraphMatchingLogger,
-    SelectiveEvidenceLogger,
-)
 from tbp.monty.frameworks.models.abstract_monty_classes import (
     LearningModule,
     LMMemory,
@@ -34,12 +36,23 @@ from tbp.monty.frameworks.models.buffer import FeatureAtLocationBuffer
 from tbp.monty.frameworks.models.goal_generation import GraphGoalGenerator
 from tbp.monty.frameworks.models.monty_base import MontyBase
 from tbp.monty.frameworks.models.object_model import GraphObjectModel
+from tbp.monty.frameworks.utils.spatial_arithmetics import (
+    apply_rf_transform_to_points,
+)
 from tbp.monty.geometry import Rotation
 from tbp.monty.memento import Memento
+from tbp.monty.runtime import is_location_only_step
+from tbp.monty.telemetry.episode.schemas import (
+    LMRecognitionStateTelemetry,
+    LMStateTelemetry,
+    TerminalState,
+)
+from tbp.monty.telemetry.schemas import TelemetryEvent
 
-__all__ = ["GraphLM", "GraphMemory", "MontyForGraphMatching"]
+__all__ = ["GraphLM", "GraphMemory", "MontyForGraphMatching", "TerminalState"]
 
 logger = logging.getLogger(__name__)
+telemeter = telemetry.getTelemeter(__name__)
 
 
 class MontyForGraphMatching(MontyBase):
@@ -47,24 +60,13 @@ class MontyForGraphMatching(MontyBase):
 
     _match_criterion: MatchCriterion
 
-    LOGGING_REGISTRY: ClassVar[dict[str, type[BaseMontyLogger]]] = {
-        # Don't do any formal logging, just save models. Used for pretraining.
-        "SILENT": BaseMontyLogger,
-        # Log things like basic stats.csv files, data to reproduce experiments
-        "BASIC": BasicGraphMatchingLogger,
-        # Utter deforestation
-        "DETAILED": DetailedGraphMatchingLogger,
-        # Save specific stats necessary for object similarity analysis.
-        "SELECTIVE": SelectiveEvidenceLogger,
-    }
-
     def __init__(self, *args, **kwargs):
         """Initialize and reset LM."""
         super().__init__(*args, **kwargs)
 
     def fixme_set_ground_truth(
         self,
-        primary_target: dict[str, Any] | None = None,
+        primary_target: PrimaryTarget | None = None,
         semantic_id_to_label: dict[SemanticID, str] | None = None,
     ) -> None:
         self.primary_target = primary_target
@@ -174,16 +176,6 @@ class MontyForGraphMatching(MontyBase):
 
         return False
 
-    # ------------------ Getters & Setters ---------------------
-
-    def set_is_done(self):
-        """Set the model's `is_done` flag.
-
-        Method that e.g. experiment classes can use to set the model's flag if
-        e.g. the total number of episode steps possible has been exceeded.
-        """
-        self._is_done = True
-
     # ------------------ Logging & Saving ----------------------
     def load_state_dict_from_parallel(self, parallel_dirs, save=False):
         lm_dict = {}
@@ -246,8 +238,9 @@ class MontyForGraphMatching(MontyBase):
                 lm_step_method(ctx, sensory_inputs)
                 if self.step_type == "matching_step":
                     logger.debug(f"Stepping learning module {i}")
+
                 self.learning_modules[i].add_lm_processing_to_buffer_stats(
-                    lm_processed=True
+                    lm_processed=not is_location_only_step(sensory_inputs)
                 )
             else:
                 if self.step_type == "matching_step":
@@ -430,8 +423,6 @@ class MontyForGraphMatching(MontyBase):
 
                     if self.experiment_mode is ExperimentMode.TRAIN:
                         self.switch_to_exploratory_step()
-                        for sm in self.sensor_modules:
-                            sm.is_exploring = True
 
                     elif (
                         self.experiment_mode is ExperimentMode.EVAL
@@ -517,8 +508,11 @@ class MontyForGraphMatching(MontyBase):
 class GraphLM(LearningModule):
     """General Learning Module that contains a graph memory."""
 
+    _goals: list[Goal]
+    """Cache of goals for ``propose_region`` to reference."""
     possible_paths: dict[str, Any]
     detected_rotation_r: Rotation | None
+    primary_target: str | None
 
     def __init__(self, initialize_base_modules=True) -> None:
         """Initialize general Learning Module based on graphs.
@@ -557,6 +551,7 @@ class GraphLM(LearningModule):
         self._init_GraphLM()
 
     def _init_GraphLM(self) -> None:  # noqa: N802
+        self._goals = []
         self.terminal_state = None
         self.detected_object = None
         self.detected_pose = [None for _ in range(7)]
@@ -578,8 +573,7 @@ class GraphLM(LearningModule):
 
     def fixme_reset_ground_truth(
         self,
-        # TODO: Create a specific type for `primary_target`.
-        primary_target: dict[str, Any] | None = None,
+        primary_target: PrimaryTarget | None = None,
     ) -> None:
         """Set target object var and reset others from last episode.
 
@@ -592,8 +586,8 @@ class GraphLM(LearningModule):
                 primary_target)
         """
         if primary_target is not None:
-            self.primary_target = primary_target["object"]
-            self.primary_target_rotation_quat = primary_target["quat_rotation"]
+            self.primary_target = primary_target.object_name
+            self.primary_target_rotation_quat = primary_target.quat_rotation
         self.stepwise_target_object = None
         self.stepwise_targets_list = []
 
@@ -603,6 +597,9 @@ class GraphLM(LearningModule):
         percepts: Sequence[Message],
     ) -> None:
         """Update the possible matches given an observation."""
+        if is_location_only_step(percepts):
+            return
+
         first_movement_detected = self._agent_moved_since_reset()
         buffer_data = self._add_displacements(percepts)
         self.buffer.append(buffer_data)
@@ -613,15 +610,17 @@ class GraphLM(LearningModule):
         else:
             logger.debug("we have not moved yet.")
 
+        feature_percepts = [p for p in percepts if p.process_features_in_lm]
+
         self._compute_possible_matches(
-            ctx, percepts, first_movement_detected=first_movement_detected
+            ctx, feature_percepts, first_movement_detected=first_movement_detected
         )
 
         if len(self.get_possible_matches()) == 0:
             self.set_individual_ts(terminal_state="no_match")
 
         if self.gsg is not None:
-            self.gsg.step(ctx, percepts)
+            self.gsg.step(ctx, feature_percepts)
 
         stats = self.collect_stats_to_save()
         self.buffer.update_stats(stats, append=self.has_detailed_logger)
@@ -632,9 +631,28 @@ class GraphLM(LearningModule):
         percepts: Sequence[Message],
     ) -> None:
         """Step without trying to recognize object (updating possible matches)."""
+        if is_location_only_step(percepts):
+            return
+
         buffer_data = self._add_displacements(percepts)
         self.buffer.append(buffer_data)
         self.buffer.append_input_percepts(percepts)
+
+    def post_step(
+        self,
+        ctx: RuntimeContext,  # noqa: ARG002
+    ) -> None:
+        self._emit_lm_state()
+
+    def _emit_lm_state(self):
+        """Emits post-step LM state telemetry."""
+        # TODO telemetry: "critical" because this event is mandatory; re-assess
+        telemeter.critical(
+            TelemetryEvent(
+                kind=LMStateTelemetry.__name__,
+                event_data=LMStateTelemetry.from_graph_lm(self),
+            )
+        )
 
     def update_ltm_from_stm(self) -> None:
         """If training, update memory from buffer."""
@@ -695,9 +713,20 @@ class GraphLM(LearningModule):
         Only returned if the LM/GSG was stepped, otherwise returns empty list.
         """
         if self.buffer.get_last_obs_processed() and self.gsg is not None:
-            return self.gsg.output_goals()
+            self._goals = self.gsg.output_goals()
+        else:
+            self._goals = []
 
-        return []
+        return self._goals
+
+    def propose_region(self) -> AttentionRegion:
+        """Returns attention region that ensures proposed goals can be attended to."""
+        if self._goals:
+            return AttentionRegion.uniform(
+                locations=np.array([goal.location for goal in self._goals]),
+                weight=AttentionRegion.MAX_WEIGHT,
+            )
+        return AttentionRegion.empty()
 
     def update_terminal_condition(self):
         """Check if we have reached a terminal condition for this episode.
@@ -713,7 +742,7 @@ class GraphLM(LearningModule):
                 self.buffer.get_num_observations_on_object() > 0
             ):  # lm has gotten input during episode
                 self.buffer.stats["detected_location_rel_body"] = (
-                    self.buffer.get_current_location(input_channel="first")
+                    self.buffer.current_location()
                 )
         # 1 possible match
         elif (
@@ -737,6 +766,15 @@ class GraphLM(LearningModule):
                 self.set_individual_ts(None)
             logger.info(f"{self.learning_module_id} did not recognize an object yet.")
         return self.terminal_state
+
+    @property
+    def recognition_status(self) -> RecognitionStatus:
+        conclusion = (
+            RecognitionConclusion(self.terminal_state)
+            if self.terminal_state is not None
+            else None
+        )
+        return RecognitionStatus(conclusion=conclusion)
 
     # ------------------ Getters & Setters ---------------------
 
@@ -899,6 +937,17 @@ class GraphLM(LearningModule):
         else:
             self.buffer.set_individual_ts(None, None)
 
+        # TODO telemetry: "critical" because this event is mandatory; re-assess
+        telemeter.critical(
+            TelemetryEvent(
+                kind=LMRecognitionStateTelemetry.__name__,
+                event_data=LMRecognitionStateTelemetry.from_graph_lm(self),
+            )
+        )
+
+        # TODO telemetry: maybe unneeded, post_step event seems sufficient; re-assess
+        # self._emit_lm_state()
+
     def collect_stats_to_save(self):
         """Get all stats that this LM should store in the buffer for logging.
 
@@ -986,6 +1035,9 @@ class GraphLM(LearningModule):
 
     def _update_memory(self):
         """Give all infos to graph_memory.update_memory to determine how to update."""
+        if self.detected_object is None:
+            logger.info("no match found in time, not updating memory")
+            return
         args = self.buffer.get_infos_for_graph_update()
         args["graph_id"] = self.detected_object
         args["object_rotation"] = self.detected_rotation_r
@@ -1026,9 +1078,12 @@ class GraphLM(LearningModule):
         Returns:
             Percepts with displacements.
         """
-        sm_percepts = [p for p in percepts if p.sender_type == "SM"]
+        sm_percepts = [p for p in percepts if p.is_from_sm()]
+        current_location = location_mean(sm_percepts)
+        assert current_location is not None, (
+            "Should have at least one sensor module percept with location"
+        )
         if self.buffer.last_location is not None:
-            current_location = np.mean([p.location for p in sm_percepts], axis=0)
             displacement = current_location - self.buffer.last_location
         else:
             displacement = np.zeros(3)
@@ -1114,7 +1169,6 @@ class GraphMemory(LMMemory):
         """
         self.graph_delta_thresholds = graph_delta_thresholds
         self.k = k
-        self.mode: ExperimentMode | None = None
         self.models_in_memory = {}
 
         # Array representation of features for each graph -> faster matching
@@ -1126,50 +1180,86 @@ class GraphMemory(LMMemory):
 
     def update_memory(
         self,
-        locations,
-        features,
-        graph_id,
-        object_location_rel_body,
-        location_rel_model,
-        object_rotation,
-    ):
-        """Determine how to update memory and call corresponding function."""
-        if graph_id is None:
-            logger.info("no match found in time, not updating memory")
+        locations: npt.NDArray,
+        features: dict[str, dict[str, npt.NDArray]],
+        graph_id: str,
+        object_location_rel_body: npt.NDArray,
+        location_rel_model: npt.NDArray,
+        object_rotation: Rotation | None,
+    ) -> None:
+        """Determine how to update memory and call corresponding function.
+
+        How each channel's data is handled falls into one of three cases:
+
+        1. Unknown object: Points are stored as-is (i.e., untransformed) for all
+           channels.
+        2. Known object, known channel: Adds the points via ``_extend_graph``. Note
+           that the points will be transformed into the model's reference frame before
+           storage, but it is not this method's responsibility.
+        3. Known object, unknown channel: Transforms the points into this model's
+           reference frame (if `object_rotation` is not None). It then builds the new
+           graph.
+
+        """
+        # Determine this before the loop: channels added by this call must not
+        # make the object look like it was already in memory (and thus has a
+        # reference frame to transform into) for channels later in the loop.
+        object_known = graph_id in self.get_memory_ids()
+        if object_known:
+            logger.info(f"{graph_id} already in memory ({self.get_memory_ids()})")
         else:
-            for input_channel in features:
-                (
-                    input_channel_features,
+            logger.info(f"{graph_id} not in memory ({self.get_memory_ids()})")
+
+        for input_channel, channel_features in features.items():
+            (
+                input_channel_features,
+                input_channel_locations,
+            ) = self._extract_entries_with_content(channel_features, locations)
+
+            if not object_known:
+                # Case 1: unknown object.
+                self._build_graph(
                     input_channel_locations,
-                ) = self._extract_entries_with_content(
-                    features[input_channel], locations[input_channel]
+                    input_channel_features,
+                    graph_id,
+                    input_channel,
                 )
-                # Update graph
-                if (
-                    graph_id in self.get_memory_ids()
-                    and input_channel in self.get_input_channels_in_graph(graph_id)
-                ):
-                    logger.info(
-                        f"{graph_id} already in memory ({self.get_memory_ids()})"
-                    )
-                    self._extend_graph(
-                        input_channel_locations,
-                        input_channel_features,
-                        graph_id,
-                        input_channel,
-                        object_location_rel_body,
-                        location_rel_model,
-                        object_rotation,
+            elif input_channel in self.get_input_channels_in_graph(graph_id):
+                # Case 2: known object, known channel.
+                self._extend_graph(
+                    input_channel_locations,
+                    input_channel_features,
+                    graph_id,
+                    input_channel,
+                    object_location_rel_body,
+                    location_rel_model,
+                    object_rotation,
+                )
+            else:
+                # Case 3: known object, unknown channel.
+                if object_rotation is None:
+                    logger.warning(
+                        f"No object rotation for {graph_id}; adding new channel "
+                        f"{input_channel} without transforming it into the "
+                        "object's reference frame."
                     )
                 else:
-                    logger.info(f"{graph_id} not in memory ({self.get_memory_ids()})")
-                    print(f"building graph for {input_channel}")
-                    self._build_graph(
+                    (
                         input_channel_locations,
                         input_channel_features,
-                        graph_id,
-                        input_channel,
+                    ) = apply_rf_transform_to_points(
+                        locations=input_channel_locations,
+                        features=input_channel_features,
+                        location_rel_model=location_rel_model,
+                        object_location_rel_body=object_location_rel_body,
+                        object_rotation=object_rotation,
                     )
+                self._build_graph(
+                    input_channel_locations,
+                    input_channel_features,
+                    graph_id,
+                    input_channel,
+                )
 
     def initialize_feature_arrays(self):
         for graph_id in self.get_memory_ids():
@@ -1354,6 +1444,7 @@ class GraphMemory(LMMemory):
         self.models_in_memory[graph_id][input_channel] = model
 
         logger.info(f"Added new graph with id {graph_id} to memory.")
+        telemeter.info(TelemetryEvent(kind="NewGraphAdded", graph_id=graph_id))
 
     def _extend_graph(
         self,

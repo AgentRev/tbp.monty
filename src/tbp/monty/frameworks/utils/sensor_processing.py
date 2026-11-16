@@ -13,15 +13,16 @@ from __future__ import annotations
 import logging
 
 import numpy as np
-import torch
+import numpy.typing as npt
 from numpy.typing import ArrayLike
 
 from tbp.monty.frameworks.utils.spatial_arithmetics import (
-    get_angle_torch,
+    get_angle_between,
     get_right_hand_angle,
     non_singular_mat,
     normalize,
 )
+from tbp.monty.geometry import SurfacePoseVectors
 
 logger = logging.getLogger(__name__)
 
@@ -174,7 +175,7 @@ def arc_length_corrected_displacement(
     basis_u: np.ndarray,
     basis_v: np.ndarray,
     principal_curvatures: np.ndarray,
-    curvature_pose_vectors: np.ndarray,
+    curvature_pose_vectors: SurfacePoseVectors,
 ) -> tuple[float, float]:
     """Convert chord-length displacements to arc-length along each basis axis.
 
@@ -187,8 +188,7 @@ def arc_length_corrected_displacement(
         basis_u: First tangent-frame basis vector.
         basis_v: Second tangent-frame basis vector.
         principal_curvatures: Array [k1, k2] of principal curvature magnitudes.
-        curvature_pose_vectors: Pose matrix whose rows [1] and [2] are the
-            principal curvature directions.
+        curvature_pose_vectors: surface pose vectors with principal curvatures.
 
     Returns:
         (arc_u, arc_v): Arc-length-corrected displacements.
@@ -197,15 +197,15 @@ def arc_length_corrected_displacement(
         basis_u,
         principal_curvatures[0],
         principal_curvatures[1],
-        curvature_pose_vectors[1],
-        curvature_pose_vectors[2],
+        curvature_pose_vectors.principal_curvature_1,
+        curvature_pose_vectors.principal_curvature_2,
     )
     k_v = directional_curvature(
         basis_v,
         principal_curvatures[0],
         principal_curvatures[1],
-        curvature_pose_vectors[1],
-        curvature_pose_vectors[2],
+        curvature_pose_vectors.principal_curvature_1,
+        curvature_pose_vectors.principal_curvature_2,
     )
     return (
         arc_from_projection(du, k_u),
@@ -831,7 +831,12 @@ def pixel_dist_to_center(n_points, patch_width, center_id):
     return np.linalg.norm(pos - pos_center, axis=2)
 
 
-def point_pair_features(pos_i, pos_j, normal_i, normal_j):
+def point_pair_features(
+    pos_i: npt.NDArray[np.float64],
+    pos_j: npt.NDArray[np.float64],
+    normal_i: npt.NDArray[np.float64],
+    normal_j: npt.NDArray[np.float64],
+) -> npt.NDArray[np.float64]:
     """Return point pair features between two points.
 
     Args:
@@ -841,15 +846,15 @@ def point_pair_features(pos_i, pos_j, normal_i, normal_j):
         normal_j: Surface normal of point 2.
 
     Returns:
-        Point pair features.
+        Point pair features as a numpy array of shape (4,).
     """
-    pseudo = pos_j - pos_i
-    return torch.stack(
+    pseudo: npt.NDArray[np.float64] = pos_j - pos_i
+    return np.array(
         [
-            pseudo.norm(p=2),
-            get_angle_torch(normal_i, pseudo),
-            get_angle_torch(normal_j, pseudo),
-            get_angle_torch(normal_i, normal_j),
+            np.linalg.norm(pseudo),
+            get_angle_between(normal_i, pseudo),
+            get_angle_between(normal_j, pseudo),
+            get_angle_between(normal_i, normal_j),
         ]
     )
 

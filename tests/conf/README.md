@@ -1,27 +1,31 @@
-# Snapshot testing
+# Hydra Configuration Tests
 
-The purpose of snapshot tests is to ensure that any changes to configurations are deliberate.
+These tests verify that our Hydra configurations are in a usable state and haven't been changed unexpectedly. They currently consist of two tests:
 
-## Why?
+- Snapshot Test
+- Orphaned Configs Test
+
+## Snapshot Test
+
+The purpose of the snapshot tests in `conf_test.py` is to ensure that any changes to configurations are deliberate.
+
+### Why?
 
 Because the configurations use inheritance and are assembled from many smaller configurations files, a small change in one of the configuration files can have cascading effects across all configurations. This may not be immediately apparent from the small diff in the one configuration file that changed.
 
 By failing a snapshot test every time a configuration is changed, we ensure that the overall cascading effects are deliberate.
 
-## Updating snapshots
+### Updating snapshots
 
-Once you observe failing tests and decide that the final configuration changes are as intended, follow this two-step checklist:
+Once you observe failing tests and decide that the final configuration changes are as intended, follow this checklist:
 
-1. Run `python src/tbp/monty/conf/update_snapshots.py`. This automatically updates all of the snapshots to reflect the current configurations. After this, your tests will once again pass, since you are comparing generated configs to the ones you just generated.
-
+1. Update experiment snapshots.
+    1. Ensure the `uv` environment is set up: `uv sync --extra dev --extra simulator_mujoco`.
+    2. Run `uv run python src/tbp/monty/conf/update_snapshots.py`. This automatically updates all the experiment snapshots to reflect the current configurations.
 2. Commit the `tests/conf/snapshots` changes to source control to confirm that all changes are intended.
 
+After this, your tests will once again pass, since you are comparing generated configs to the ones you just generated.
 
-### Updating MuJoCo snapshots (optional)
+## Orphaned Configs Test
 
-When making changes to any of the configurations that end with `_mujoco.yaml`, you'll need to run the `update_snapshots.py` script with the `--mujoco` flag to switch it to look at and generate those snapshots.
-
-You will need a working `uv` environment to run the script with the `--mujoco` flag.
-
-> [!note]
-> Since the MuJoCo simulator and `uv` environment are still experimental and not required yet, you can ignore changing them for now.
+The purpose of the orphaned config tests in `orphan_test.py` is to make sure when we are editing configurations that we don't leave any orphaned component configurations and end up keeping around dead configs.

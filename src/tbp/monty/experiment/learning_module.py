@@ -9,6 +9,8 @@
 
 from typing import Protocol
 
+from tbp.monty.experiment.primary_target import PrimaryTarget
+from tbp.monty.experiment.recognition_status import RecognitionStatus
 from tbp.monty.frameworks.experiments.mode import ExperimentMode
 
 __all__ = [
@@ -26,7 +28,9 @@ class ExperimentLearningModule(Protocol):
         """
         ...
 
-    def fixme_reset_ground_truth(self, primary_target=None) -> None:
+    def fixme_reset_ground_truth(
+        self, primary_target: PrimaryTarget | None = None
+    ) -> None:
         """Reset internal state based on ground truth.
 
         Args:
@@ -52,3 +56,6 @@ class ExperimentLearningModule(Protocol):
             mode: The experiment mode.
         """
         ...
+
+    @property
+    def recognition_status(self) -> RecognitionStatus: ...

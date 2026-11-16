@@ -25,6 +25,8 @@ import numpy.typing as npt
 import pandas as pd
 import torch
 
+from tbp.monty.experiment.primary_target import PrimaryTarget
+from tbp.monty.frameworks.models.abstract_monty_classes import Monty
 from tbp.monty.frameworks.utils.spatial_arithmetics import (
     get_unique_rotations,
     rotations_to_quats,
@@ -240,7 +242,7 @@ def check_rotation_accuracy(stats, last_n_step=1):
     pose_stats = []
     for episode in stats:
         if len(stats[episode]["LM_0"]["possible_poses"]) >= last_n_step:
-            target_object = stats[episode]["LM_0"]["target"]["object"]
+            target_object = stats[episode]["LM_0"]["target"]["object_name"]
             target_rotation = stats[episode]["LM_0"]["target"]["euler_rotation"]
             detected_rotations = stats[episode]["LM_0"]["possible_poses"][-last_n_step][
                 target_object
@@ -331,7 +333,7 @@ def check_detection_accuracy_at_step(stats, last_n_step=1):
     for episode in stats:
         possible_matches = stats[episode]["LM_0"]["possible_matches"]
         if len(possible_matches) >= last_n_step:
-            target_object = stats[episode]["LM_0"]["target"]["object"]
+            target_object = stats[episode]["LM_0"]["target"]["object_name"]
             matches_at_step = possible_matches[-last_n_step]
             if len(matches_at_step) == 0:
                 performance = "no matches"
@@ -576,7 +578,7 @@ def get_graph_lm_episode_stats(lm):
     ):  # TODO: update this?
         num_steps = lm.buffer.get_num_matching_steps()
 
-        location = np.array(lm.buffer.get_current_location(input_channel="first"))
+        location = np.array(lm.buffer.current_location())
         possible_matches = lm.get_possible_matches()
         primary_performance = lm.terminal_state
         stepwise_performance = lm.terminal_state
@@ -736,11 +738,14 @@ def add_pose_lm_episode_stats(lm, stats):
     return stats
 
 
-def get_stats_per_lm(model, target, episode_seed: int) -> dict:
+def get_stats_per_lm(
+    model: Monty, episode_steps: int, target: PrimaryTarget, episode_seed: int
+) -> dict[str, dict[str, Any]]:
     """Loop through lms and get stats.
 
     Args:
         model: model instance
+        episode_steps: number of steps taken in the episode
         target: target object
         episode_seed: RNG seed used for the episode
 
@@ -752,13 +757,11 @@ def get_stats_per_lm(model, target, episode_seed: int) -> dict:
     for i, lm in enumerate(model.learning_modules):
         lm_stats = get_graph_lm_episode_stats(lm)
         if hasattr(lm, "hypotheses_updater"):
-            lm_stats = add_evidence_lm_episode_stats(
-                lm, lm_stats, target["consistent_child_objects"]
-            )
+            lm_stats = add_evidence_lm_episode_stats(lm, lm_stats)
         else:
             lm_stats = add_pose_lm_episode_stats(lm, lm_stats)
         lm_stats = add_policy_episode_stats(lm, lm_stats)
-        lm_stats["monty_steps"] = model.episode_steps
+        lm_stats["monty_steps"] = episode_steps
         lm_stats["monty_matching_steps"] = model.matching_steps
         lm_stats["episode_seed"] = episode_seed
         performance_dict[f"LM_{i}"] = lm_stats
@@ -782,8 +785,8 @@ def add_policy_episode_stats(lm, stats):
     return stats
 
 
-def add_evidence_lm_episode_stats(lm, stats, consistent_child_objects):
-    last_mlh = lm.get_current_mlh()
+def add_evidence_lm_episode_stats(lm, stats):
+    last_mlh = lm._get_current_mlh()
 
     stats["most_likely_object"] = last_mlh["graph_id"]
     stats["most_likely_location"] = last_mlh["location"]
@@ -807,15 +810,6 @@ def add_evidence_lm_episode_stats(lm, stats, consistent_child_objects):
             ),
             4,
         )
-    # Check if the most likely object is a consistent child object
-    # Don't do this if the episode timed out, we had no match, or the detected object
-    # was already an exact match with the label.
-    if (
-        stats["primary_performance"] in ["confused", "confused_mlh"]
-        and consistent_child_objects
-        and last_mlh["graph_id"] in consistent_child_objects
-    ):
-        stats["primary_performance"] = "consistent_child_obj"
     return stats
 
 
@@ -834,7 +828,7 @@ def calculate_performance(stats, performance_type, lm, target_object):
     """
     if stats[performance_type] in ["time_out", "pose_time_out"]:
         # Check if the final result (object label) is consistent with the target
-        if target_object in lm.graph_id_to_target[lm.get_current_mlh()["graph_id"]]:
+        if target_object in lm.graph_id_to_target[lm._get_current_mlh()["graph_id"]]:
             stats[performance_type] = "correct_mlh"
         else:
             stats[performance_type] = "confused_mlh"
@@ -842,7 +836,9 @@ def calculate_performance(stats, performance_type, lm, target_object):
     return stats
 
 
-def target_data_to_dict(target):
+def target_data_to_dict(
+    target: PrimaryTarget,
+) -> dict[str, str | npt.NDArray[np.float64] | float]:
     """Format target params to dict.
 
     Args:
@@ -851,14 +847,14 @@ def target_data_to_dict(target):
     Returns:
         dict with target params
     """
-    output_dict = {}
-    output_dict["primary_target_object"] = target["object"]
+    output_dict: dict[str, str | npt.NDArray[np.float64] | float] = {}
+    output_dict["primary_target_object"] = target.object_name
     # Convert values to NumPy arrays to get consistent string rendering.
-    output_dict["primary_target_position"] = np.array(target["position"])
-    output_dict["primary_target_rotation_euler"] = np.array(target["euler_rotation"])
-    output_dict["primary_target_rotation_quat"] = np.array(target["rotation"])
+    output_dict["primary_target_position"] = np.array(target.position)
+    output_dict["primary_target_rotation_euler"] = np.array(target.euler_rotation)
+    output_dict["primary_target_rotation_quat"] = np.array(target.rotation)
     # Currently scale is applied uniformly along all dimensions
-    output_dict["primary_target_scale"] = target["scale"][0]
+    output_dict["primary_target_scale"] = target.scale[0]
 
     return output_dict
 
@@ -872,82 +868,6 @@ def overall_accuracy(eval_stats):
         / len(eval_stats)
         * 100
     )
-
-
-def consistent_child_objects_accuracy(eval_stats_for_lm, parent_to_child_mapping):
-    """Check whether most_likely_object is consistent with the parent_to_child_mapping.
-
-    Classified object is consistent if it is one of the children in the set of objects
-    corresponding to the compositional object.
-
-    NOTE: This function is only called in compositional_stats_for_all_lms, which is a
-    logging util, called from a notebook and hence none of our previous experiments
-    should be affected by this or raise the ValueError, even if they don't have a
-    parent_to_child_mapping.
-
-    Returns:
-        The percentage of episodes in which a consistent child object is detected.
-
-    Raises:
-        ValueError: If the target object of an episode is not in the
-        parent_to_child_mapping.
-    """
-    consistent_child_count = 0
-    total_count = 0
-
-    for _, episode_stats in eval_stats_for_lm.iterrows():
-        if episode_stats.primary_target_object in parent_to_child_mapping:
-            total_count += 1
-            possible_children = parent_to_child_mapping[
-                episode_stats.primary_target_object
-            ]
-            if episode_stats.most_likely_object in possible_children:
-                consistent_child_count += 1
-        else:
-            raise ValueError(
-                f"No mappings found for target object"
-                f" {episode_stats.primary_target_object}"
-            )
-    return consistent_child_count / total_count * 100
-
-
-def accuracy_stats_for_compositional_objects(
-    eval_stats_for_lm, parent_to_child_mapping
-):
-    compositional_object_accuracy = overall_accuracy(eval_stats_for_lm)
-    consistent_child_accuracy = consistent_child_objects_accuracy(
-        eval_stats_for_lm, parent_to_child_mapping
-    )
-
-    return compositional_object_accuracy, consistent_child_accuracy
-
-
-def compositional_stats_for_all_lms(eval_stats, all_lm_ids, parent_to_child_mapping):
-    lm_stats_dict = {}
-    for lm_id in all_lm_ids:
-        eval_stats_for_lm = eval_stats[eval_stats["lm_id"] == f"LM_{lm_id}"]
-        compositional_object_accuracy, consistent_child_accuracy = (
-            accuracy_stats_for_compositional_objects(
-                eval_stats_for_lm, parent_to_child_mapping
-            )
-        )
-        print(
-            f"LM_{lm_id} accuracy: {compositional_object_accuracy}% correct",
-            "(or correct_mlh)",
-        )
-        print(f"LM_{lm_id} consistent child accuracy: {consistent_child_accuracy}%")
-        print(
-            f"LM_{lm_id} average prediction error: ",
-            f"{np.mean(eval_stats_for_lm['episode_avg_prediction_error'])}",
-        )
-        lm_stats_dict[lm_id] = {
-            "compositional_object_accuracy": compositional_object_accuracy,
-            "consistent_child_accuracy": consistent_child_accuracy,
-            "episode_avg_prediction_error": np.mean(
-                eval_stats_for_lm["episode_avg_prediction_error"]
-            ),
-        }
-    return lm_stats_dict
 
 
 def mean_num_steps_for_lm(eval_stats, lm_id):

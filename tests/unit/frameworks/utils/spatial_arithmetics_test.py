@@ -20,6 +20,7 @@ from scipy.spatial.transform import Rotation
 
 from tbp.monty.frameworks.utils.spatial_arithmetics import (
     TangentFrame,
+    get_angle_between,
     normalize,
     project_onto_tangent_plane,
 )
@@ -31,14 +32,13 @@ def vectors_3d(
     draw: st.DrawFn,
     min_value: float = -1e6,
     max_value: float = 1e6,
-    dtype: npt.DTypeLike = np.float32,
+    dtype: npt.DTypeLike = np.float64,
 ):
-    # TODO(scottcanoe): Reconsider np.float32 as the default dtype.
     return draw(
         arrays(
             dtype=dtype,
             shape=3,
-            elements=st.floats(min_value=min_value, max_value=max_value, width=32),
+            elements=st.floats(min_value=min_value, max_value=max_value),
         )
     )
 
@@ -48,12 +48,12 @@ def nonzero_magnitude_vectors(
     draw: st.DrawFn,
     min_value: float = -1e6,
     max_value: float = 1e6,
-    dtype: npt.DTypeLike = np.float32,
+    dtype: npt.DTypeLike = np.float64,
 ):
-    # TODO(scottcanoe): Reconsider np.float32 as the default dtype.
     return draw(
-        vectors_3d(min_value=min_value, max_value=max_value, dtype=dtype).filter(
-            lambda v: np.linalg.norm(v) > DEFAULT_TOLERANCE
+        st.one_of(
+            vectors_3d(min_value=min_value, max_value=-DEFAULT_TOLERANCE, dtype=dtype),
+            vectors_3d(min_value=DEFAULT_TOLERANCE, max_value=max_value, dtype=dtype),
         )
     )
 
@@ -84,7 +84,7 @@ def quaternions(draw: st.DrawFn):
 
 
 rotation_objs = quaternions().map(lambda q: Rotation.from_quat([q.x, q.y, q.z, q.w]))
-rotation_matrices = quaternions().map(
+rotation_matrix = quaternions().map(
     lambda q: Rotation.from_quat([q.x, q.y, q.z, q.w]).as_matrix()
 )
 
@@ -228,3 +228,44 @@ class TangentFrameTest(unittest.TestCase):
         frame = TangentFrame(n1)
         frame.transport(n2)
         self._assert_orthonormal_frame(frame, n2)
+
+
+class GetAngleBetweenTest(unittest.TestCase):
+    """Test angles between 3D vectors of arbitrary lengths."""
+
+    @given(
+        v1=nonzero_magnitude_vectors(dtype=np.float64),
+        v2=nonzero_magnitude_vectors(dtype=np.float64),
+    )
+    @example(v1=np.array([2.0, 0.0, 0.0]), v2=np.array([1.0, 1.0, 0.0]))  # 45 degrees
+    @example(v1=np.array([2.0, 0.0, 0.0]), v2=np.array([3.0, 0.0, 0.0]))  # parallel
+    @example(
+        v1=np.array([2.0, 0.0, 0.0]), v2=np.array([-3.0, 0.0, 0.0])
+    )  # anti-parallel
+    @example(v1=np.array([2.0, 0.0, 0.0]), v2=np.array([0.0, -3.0, 0.0]))  # orthogonal
+    def test_matches_normalized_dot_product(
+        self, v1: npt.NDArray[np.float64], v2: npt.NDArray[np.float64]
+    ) -> None:
+        u1 = v1.copy()
+        u2 = v2.copy()
+        u1 /= np.linalg.norm(u1)
+        u2 /= np.linalg.norm(u2)
+        expected = float(np.arccos(np.clip(np.dot(u1, u2), -1.0, 1.0)))
+
+        actual = get_angle_between(v1, v2)
+
+        self.assertTrue(0.0 <= actual <= np.pi)
+        self.assertTrue(np.allclose(actual, expected, atol=DEFAULT_TOLERANCE, rtol=0))
+
+    @given(v=vectors_3d(dtype=np.float64))
+    @example(v=np.zeros(3))
+    def test_zero_vector_returns_zero(self, v: npt.NDArray[np.float64]) -> None:
+        """Preserve the documented zero-vector convention."""
+        zero = np.zeros(3)
+
+        np.testing.assert_allclose(
+            [get_angle_between(zero, v), get_angle_between(v, zero)],
+            [0.0, 0.0],
+            atol=DEFAULT_TOLERANCE,
+            rtol=0,
+        )

@@ -7,7 +7,7 @@ These benchmark experiments are not common benchmarks from the AI field. There a
 
 You can find Monty experiment configs for all the following experiments in the [benchmarks](https://github.com/thousandbrainsproject/tbp.monty/tree/main/benchmarks) folder. Note that the experiment parameters are not overly optimized for accuracy. **The parameters used here aim to strike a good balance between speed and accuracy** to allow our researchers to iterate quickly and evaluate algorithm changes regularly. If a particular use case requires higher accuracy or faster learning or inference, this can be achieved by adjusting learning module parameters.
 
-The runtimes reported in the tables below reflect the **total experiment runtime**, which includes overhead such as environment setup (e.g., Habitat initialization), logging, and telemetry. The isolated Monty runtime (i.e., the time spent on learning or inference) is typically less than the reported values. In Wandb logs, this corresponds to the column labeled `RUNTIME`.
+The runtimes reported in the tables below reflect the **total experiment runtime**, which includes overhead such as environment setup (e.g., simulator initialization), logging, and telemetry. The isolated Monty runtime (i.e., the time spent on learning or inference) is typically less than the reported values. In Wandb logs, this corresponds to the column labeled `RUNTIME`.
 
 If you want to evaluate Monty on external benchmarks, please have a look at our [application criteria](./application-criteria.md) and [challenging preconceptions](./vision-of-the-thousand-brains-project/challenging-preconceptions.md) pages first. Particularly, note that Monty is a sensorimotor system made to efficiently learn and infer by interacting with an environment. It is not designed for large, static datasets.
 
@@ -73,20 +73,11 @@ The following results are obtained from experiments on the entire YCB dataset (7
 
 ### Explanation of Some of the Results
 
-- **Why does the distant agent do worse than the surface agent?**
-  The distant agent has limited capabilities to move along the object. In particular, the distant agent currently uses an almost random policy which is not as efficient and informative as the surface agent which follows the principal curvatures of the object. Note however that both the distant and surface agent can now move around the object using the hypothesis-testing action policy, and so the difference in performance between the two is not as great as it previously was.
-
-- **Why is the distant agent on the distant agent models worse than on the surface agent model?**
-  As you can see in the figure above, the models learned with distant agent have several blind spots and unevenly sampled areas. When we test random rotations we may see the object from views that are underrepresented in the object model. If we use a 10% threshold instead of 20% we can actually get a little better performance with the distant agent since we allow it to converge faster. This may be because it gets less time to move into badly represented areas and because it reaches the time-out condition less often.
-
 - **Why is the accuracy on distinct objects higher than on similar objects?**
   Since we need to be able to deal with noise, it can happen that objects that are similar to each other get confused. In particular, objects that only differ in some specific locations (like the fork and the spoon) can be difficult to distinguish if the policy doesn't efficiently move to the distinguishable features and if there is noise.
 
 - **Why is raw sensor noise so much worse than the standard noise condition?**
   This is not related to the capabilities of the learning module but to the sensor module. Currently, our surface normal and principal curvature estimates are not implemented to be very robust to sensor noise such that noise in the depth image can distort the surface normal by more than 70 degrees. We don't want our learning module to be robust to this much noise in the surface normals but instead want the sensor module to communicate better features. We already added some improvements on our surface normal estimates which helped a lot on the raw noise experiment.
-
-- **Why do the distant agent experiments take longer and have more episodes where the most likely hypothesis is used?**
-  Since the distant agent policy is less efficient in how it explores a given view (random walk of tilting the camera), we take more steps to converge with the distant agent or sometimes do not resolve the object at all (this is when we reach a time-out and use the MLH). If we have to take more steps for each episode, the runtime also increases.
 
 - **Why is the run time for 77 objects longer than for 10?**
   For one, we run more episodes per epoch (77 instead of 10) so each epoch will take longer. However, in the current benchmark, we test with fewer rotations (only 3 epochs instead of 14 or 10 epochs in the shorter experiments). Therefore the main factor here is that the number of evidence updates we need to perform at each step scales linearly with the number of objects an LM has in its memory (going down over time as we remove objects from our hypothesis space). Additionally, we need to take more steps to distinguish 77 objects than to distinguish 10 (especially if the 10 objects are distinct).
@@ -119,75 +110,85 @@ These experiments are currently run without multiprocessing (using `run.py`).
 
 # Compositional Datasets
 
-## Logos on Objects
+## Compositional Objects With Stickers (COWS)
 
-The following experiments evaluate Monty's ability to learn and infer compositional objects, where these consist of simple 3D objects (a disk, a cube, a cylinder, a sphere, and a mug) with 2D logos on their surface. The logos are either the [TBP](https://thousandbrains.org/) logo or the [Numenta](https://www.numenta.com/) logo. In the dataset, the logos can be in a standard orientation on the object, or oriented vertically. Finally, there is an instance of the mug with the TBP logo bent half-way along the logo at 45 degrees.
+The following experiments evaluate Monty's ability to learn and infer compositional objects, where these consist of simple 3D objects (a disk, a cube, a cylinder, a sphere, and a mug) with stickers on their surface.
 
 ![](../figures/overview/comp_logo_dataset_examples.png)
 
-We want to determine the ability of a Monty system with a hierarchy of LMs (here, a single low-level LM sending input to a single high-level LM) to build compositional models of these kinds of objects. To enable learning such models, we provide some amount of supervision to the LMs. The low and high-level LMs begin by learning the 3D objects and logos in isolation, as standalone objects. These are referred to as object "parts" in the configs. We then present Monty the compositional objects, while the low-level LM is set to perform unsupervised inference. Any object IDs it detects to the high level LM. The high level LM continues learning, and is provided with a supervised label for the compositional object (e.g. `024_mug_tbp_horz`).
+We want to determine the ability of a Monty system with a heterarchy of LMs to build compositional models of these kinds of objects. Two low-level SM/LM pairs operate independently: one learns the 3D objects and the other learns the 2D stickers. Both low-level LMs send detected object IDs to a high-level LM, which also receives direct input from a third 3D SM through a skip connection. To enable learning such models, we provide some amount of supervision to the LMs. The low-level LMs first learn the 3D objects and stickers in isolation as standalone objects. We then present Monty with the compositional objects while the low-level LMs perform unsupervised inference. The high-level LM continues learning and is provided with a supervised label for the compositional object (e.g. `024_mug_tbp_horz`).
 
-To measure performance, we introduced two new metrics:
+The monolithic baseline uses the same two child SM/LM pairs and third high-level SM/LM pair, and follows the same staged training process: the low-level LMs first learn the 3D objects and stickers, and then the high-level LM is trained on the compositional objects. However, there are no connections between LMs. Each LM receives input only from its paired SM, so the high-level LM learns each object as a monolithic model rather than as a composition of detected child objects.
 
-* `consistent_child_obj`, which measures when a learning module detects an object within the set of plausible children objects. For example, the consistent child objects for `mug_tbp_horz` would be `mug` and `tbp_logo`. We use this since the lower level LM doesn't have the compositional model and we have no ability, e.g. a semantic sensor, to know which part it was sensing.
-* `mlh_prediction_error`, which measures how closely the prediction of the most likely hypothesis matches the current input.
+The accuracy, Used MLH, average rotation error, and average prediction error in the results below are reported for `LM_2`, rather than using episode-level aggregate metrics. In the compositional configuration, `LM_2` is the higher-level parent LM that receives outputs from `LM_0` and `LM_1`. The monolithic control also reports `LM_2` so the two configurations measure the same high-level LM, although `LM_2` is not a parent in the monolithic configuration because there are no LM-to-LM connections. Matching steps and runtime remain experiment-level metrics.
 
 ### Results
 
-!table[../../benchmarks/logos_on_objects.csv]
-
-Note: These experiments use 100 inference steps rather than the typical 500. Monolithic models often time out, making the benchmarks prohibitively slow at the larger step limit.
-
 > [!WARNING]
->
-> These benchmarks are not currently expected to have good performance and are used to track our research progress for compositional datasets.
+> These benchmarks track ongoing compositional research and are not currently expected to have good performance.
 
-Note: To obtain these results, pretraining was run without parallelization across episodes, inference was run with parallelization.
+#### COWS Small
+
+`cows_small` evaluates recognition on 19 objects:five plain 3D objects (disk, cube, cylinder, sphere, and mug) and 14 compositional objects with either TBP or Numenta logos. The two logos are learned separately by the 2D child LM.
+
+!table[../../benchmarks/cows_small.csv]
+
+#### COWS Large
+
+`cows_large` contains 119 objects: the 19 objects in `cows_small` plus 100 additional compositional objects. Its 2D child LM learns seven stickers: the two logos plus square, circle, triangle, star, and heart.
+
+The `random_locs` experiments evaluate only the 100 additional objects with changed sticker locations, using three predefined orientations (300 episodes) and the standard-location pretrained models.
+
+!table[../../benchmarks/cows_large.csv]
 
 > [!NOTE]
 > You can download the data here:
 >
 > | Dataset | Archive Format | Download Link |
 > | --- | --- | --- |
-> | compositional_objects_1.2 | tgz | [compositional_objects_1.2.tgz](https://tbp-data-public-5e789bd48e75350c.s3.us-east-2.amazonaws.com/tbp.monty/compositional_objects_1.2.tgz) |
-> | compositional_objects_1.2 | zip | [compositional_objects_1.2.zip](https://tbp-data-public-5e789bd48e75350c.s3.us-east-2.amazonaws.com/tbp.monty/compositional_objects_1.2.zip) |
-> 
-> Unpack the archive in the `~/tbp/data/habitat/versioned_data/` folder. For example:
+> | compositional_objects_1.4_mujoco | tgz | [compositional_objects_1.4_mujoco.tgz](https://tbp-data-public-5e789bd48e75350c.s3.us-east-2.amazonaws.com/tbp.monty/compositional_objects_1.4_mujoco.tgz) |
+> | compositional_objects_1.4_mujoco | zip | [compositional_objects_1.4_mujoco.zip](https://tbp-data-public-5e789bd48e75350c.s3.us-east-2.amazonaws.com/tbp.monty/compositional_objects_1.4_mujoco.zip) |
+> | compositional_objects_1.4_random_locs_mujoco | tgz | [compositional_objects_1.4_random_locs_mujoco.tgz](https://tbp-data-public-5e789bd48e75350c.s3.us-east-2.amazonaws.com/tbp.monty/compositional_objects_1.4_random_locs_mujoco.tgz) |
+> | compositional_objects_1.4_random_locs_mujoco | zip | [compositional_objects_1.4_random_locs_mujoco.zip](https://tbp-data-public-5e789bd48e75350c.s3.us-east-2.amazonaws.com/tbp.monty/compositional_objects_1.4_random_locs_mujoco.zip) |
+>
+> Both COWS Small and COWS Large use `compositional_objects_1.4_mujoco`. The COWS Large `random_locs` experiments additionally require `compositional_objects_1.4_random_locs_mujoco` for evaluation.
+>
+> Unpack the archive in the `~/tbp/data/mujoco/versioned_data/` folder. For example:
 >
 > ```plaintext tgz
-> mkdir -p ~/tbp/data/habitat/versioned_data/
+> mkdir -p ~/tbp/data/mujoco/versioned_data/
 >
-> cd ~/tbp/data/habitat/versioned_data/
+> cd ~/tbp/data/mujoco/versioned_data/
 >
-> curl -L https://tbp-data-public-5e789bd48e75350c.s3.us-east-2.amazonaws.com/tbp.monty/compositional_objects_1.2.tgz | tar -xzf -
+> curl -L https://tbp-data-public-5e789bd48e75350c.s3.us-east-2.amazonaws.com/tbp.monty/compositional_objects_1.4_mujoco.tgz | tar -xzf -
+> curl -L https://tbp-data-public-5e789bd48e75350c.s3.us-east-2.amazonaws.com/tbp.monty/compositional_objects_1.4_random_locs_mujoco.tgz | tar -xzf -
 > ```
 >
 > or
 >
 > ```plaintext zip
-> mkdir -p ~/tbp/data/habitat/versioned_data/
-> 
-> cd ~/tbp/data/habitat/versioned_data/
-> 
-> curl -O https://tbp-data-public-5e789bd48e75350c.s3.us-east-2.amazonaws.com/tbp.monty/compositional_objects_1.2.zip
-> 
-> unzip compositional_objects_1.2.zip
+> mkdir -p ~/tbp/data/mujoco/versioned_data/
+>
+> cd ~/tbp/data/mujoco/versioned_data/
+>
+> curl -O https://tbp-data-public-5e789bd48e75350c.s3.us-east-2.amazonaws.com/tbp.monty/compositional_objects_1.4_mujoco.zip
+>
+> unzip compositional_objects_1.4_mujoco.zip
+> > curl -O https://tbp-data-public-5e789bd48e75350c.s3.us-east-2.amazonaws.com/tbp.monty/compositional_objects_1.4_random_locs_mujoco.zip
+>
+> unzip compositional_objects_1.4_random_locs_mujoco.zip
 > ```
 >
-> Then create a symlink so that the experiment configs (which look for `~/tbp/data/habitat/objects/compositional_objects`) can find the versioned dataset folder:
+> To generate the pretrained models, run the following experiments in order. Train the shared five 3D children first, then the size-specific 2D children, then each parent model. Both parent architectures load the corresponding 2D-child checkpoint, which already contains the shared 3D children. Intermediate checkpoints are read from `${MONTY_MODELS}/my_trained_models/<experiment>/pretrained/`; keep the output directories consistent with these dependencies.
 >
-> ```plaintext
-> mkdir -p ~/tbp/data/habitat/objects/
->
-> ln -s ~/tbp/data/habitat/versioned_data/compositional_objects_1.1 ~/tbp/data/habitat/objects/compositional_objects
-> ```
->
-> To generate the pretrained models, run the following experiments in order:
-> ```
-> python run.py experiment=supervised_pre_training_objects_with_stickers_3d_children
-> python run.py experiment=supervised_pre_training_objects_with_stickers_2d_children
-> python run.py experiment=supervised_pre_training_objects_with_stickers_comp_models
-> python run.py experiment=supervised_pre_training_objects_with_stickers_monolithic_models
+> ```sh
+> python run.py experiment=supervised_pre_training_cows_3d_children
+> python run.py experiment=supervised_pre_training_cows_small_2d_children
+> python run.py experiment=supervised_pre_training_cows_small_compositional
+> python run.py experiment=supervised_pre_training_cows_small_monolithic
+> python run.py experiment=supervised_pre_training_cows_large_2d_children
+> python run.py experiment=supervised_pre_training_cows_large_compositional
+> python run.py experiment=supervised_pre_training_cows_large_monolithic
 > ```
 
 > [!NOTE]
@@ -195,32 +196,37 @@ Note: To obtain these results, pretraining was run without parallelization acros
 >
 > | Models | Archive Format | Download Link |
 > | --- | --- | --- |
-> | pretrained_compositional_objects_v5 | tgz | [pretrained_compositional_objects_v5.tgz](https://tbp-pretrained-models-public-c9c24aef2e49b897.s3.us-east-2.amazonaws.com/tbp.monty/pretrained_compositional_objects_v5.tgz) |
-> | pretrained_compositional_objects_v5 | zip | [pretrained_compositional_objects_v5.zip](https://tbp-pretrained-models-public-c9c24aef2e49b897.s3.us-east-2.amazonaws.com/tbp.monty/pretrained_compositional_objects_v5.zip) |
+> | pretrained_compositional_objects_v10 | tgz | [pretrained_compositional_objects_v10.tgz](https://tbp-pretrained-models-public-c9c24aef2e49b897.s3.us-east-2.amazonaws.com/tbp.monty/pretrained_compositional_objects_v10.tgz) |
+> | pretrained_compositional_objects_v10 | zip | [pretrained_compositional_objects_v10.zip](https://tbp-pretrained-models-public-c9c24aef2e49b897.s3.us-east-2.amazonaws.com/tbp.monty/pretrained_compositional_objects_v10.zip) |
 >
-> Unpack the archive in the `~/tbp/results/monty/pretrained_models/` folder. For example:
+> Both COWS Small and COWS Large use this archive, including the shared 3D-child models.
+>
+> Unpack the archive in `${MONTY_MODELS}` (default: `~/tbp/results/monty/pretrained_models/`). For example, using the default location:
 >
 > ```plaintext tgz
 > mkdir -p ~/tbp/results/monty/pretrained_models/
 >
 > cd ~/tbp/results/monty/pretrained_models/
 >
-> curl -L https://tbp-pretrained-models-public-c9c24aef2e49b897.s3.us-east-2.amazonaws.com/tbp.monty/pretrained_compositional_objects_v5.tgz | tar -xzf -
+> curl -L https://tbp-pretrained-models-public-c9c24aef2e49b897.s3.us-east-2.amazonaws.com/tbp.monty/pretrained_compositional_objects_v10.tgz | tar -xzf -
 > ```
+>
+> or
+>
 > ```plaintext zip
 > mkdir -p ~/tbp/results/monty/pretrained_models/
 >
 > cd ~/tbp/results/monty/pretrained_models/
 >
-> curl -O https://tbp-pretrained-models-public-c9c24aef2e49b897.s3.us-east-2.amazonaws.com/tbp.monty/pretrained_compositional_objects_v5.zip
+> curl -O https://tbp-pretrained-models-public-c9c24aef2e49b897.s3.us-east-2.amazonaws.com/tbp.monty/pretrained_compositional_objects_v10.zip
 >
-> unzip pretrained_compositional_objects_v5.zip
+> unzip pretrained_compositional_objects_v10.zip
 > ```
 
 
 # Monty-Meets-World
 
-The following experiments evaluate a Monty model on real-world images derived from the RGBD camera of an iPad/iPhone device. The models that the Monty system leverages are based on photogrammetry scans of the same objects in the real world, and Monty learns on these in the simulated Habitat environment; this approach is taken because currently, we cannot track the movements of the iPad through space, and so Monty cannot leverage its typical sensorimotor learning to build the internal models. 
+The following experiments evaluate a Monty model on real-world images derived from the RGBD camera of an iPad/iPhone device. The models that the Monty system leverages are based on photogrammetry scans of the same objects in the real world, and Monty learns on these in the simulated environment; this approach is taken because currently, we cannot track the movements of the iPad through space, and so Monty cannot leverage its typical sensorimotor learning to build the internal models. 
 
 For a really cool video of the first time Monty was tested in the real world, see the recording linked on our [project showcase page](../community/project-showcase.md#monty-for-object-detection-with-the-ipad-camera).
 
@@ -259,32 +265,32 @@ Finally, note that the world_image experimental runs **do not support running wi
 See the [monty_lab project folder](https://github.com/thousandbrainsproject/monty_lab/tree/main/monty_meets_world) for the code.
 
 > [!NOTE]
-> The `randrot_noise_sim_on_scan_monty_world` experiment requires HabitatSim to be installed as well as additional data containing the meshes for the simulator to use.
+> The `randrot_noise_sim_on_scan_monty_world` experiment requires MuJoCo to be installed as well as additional data containing the meshes for the simulator to use.
 >
 >You can download the data:
 >
 > | Dataset | Archive Format | Download Link |
 > | --- | --- | --- |
-> | numenta_lab | tgz | [numenta_lab.tgz](https://tbp-data-public-5e789bd48e75350c.s3.us-east-2.amazonaws.com/tbp.monty/numenta_lab.tgz) |
-> | numenta_lab | zip | [numenta_lab.zip](https://tbp-data-public-5e789bd48e75350c.s3.us-east-2.amazonaws.com/tbp.monty/numenta_lab.zip) |
+> | numenta_lab_v2 | tgz | [numenta_lab_v2.tgz](https://tbp-data-public-5e789bd48e75350c.s3.us-east-2.amazonaws.com/tbp.monty/numenta_lab_v2.tgz) |
+> | numenta_lab_v2 | zip | [numenta_lab_v2.zip](https://tbp-data-public-5e789bd48e75350c.s3.us-east-2.amazonaws.com/tbp.monty/numenta_lab_v2.zip) |
 >
-> Unpack the archive in the `~/tbp/data/` folder. For example:
+> Unpack the archive in the `~/tbp/data/mujoco` folder. For example:
 >
 > ```plaintext tgz
-> mkdir -p ~/tbp/data/
+> mkdir -p ~/tbp/data/mujoco
 >
-> cd ~/tbp/data/
+> cd ~/tbp/data/mujoco
 >
-> curl -L https://tbp-data-public-5e789bd48e75350c.s3.us-east-2.amazonaws.com/tbp.monty/numenta_lab.tgz | tar -xzf -
+> curl -L https://tbp-data-public-5e789bd48e75350c.s3.us-east-2.amazonaws.com/tbp.monty/numenta_lab_v2.tgz | tar -xzf -
 > ```
 > ```plaintext zip
-> mkdir -p ~/tbp/data/
+> mkdir -p ~/tbp/data/mujoco
 >
-> cd ~/tbp/data/
+> cd ~/tbp/data/mujoco
 >
-> curl -O https://tbp-data-public-5e789bd48e75350c.s3.us-east-2.amazonaws.com/tbp.monty/numenta_lab.zip
+> curl -O https://tbp-data-public-5e789bd48e75350c.s3.us-east-2.amazonaws.com/tbp.monty/numenta_lab_v2.zip
 >
-> unzip numenta_lab.zip
+> unzip numenta_lab_v2.zip
 > ```
 
 ### Results
@@ -296,7 +302,7 @@ See the [monty_lab project folder](https://github.com/thousandbrainsproject/mont
 ### Explanation of Some of the Results
 
 - **Why is there such a drop in performance going from sim-to-real?**  
-  Although there are likely a variety of factors at play, it is worth emphasizing that it is highly non trivial to learn on photogrammetry scanned objects, and then generalize to images extracted from an RGBD depth camera, as this is a significant shift in the source of data available to the model. Furthermore, note that due to structural similarity of several of the objects in the dataset to one another, it is not too surprising that the model may converge to an incorrect hypothesis given only a single view.
+  Although there are likely a variety of factors at play, it is worth emphasizing that it is highly non-trivial to learn on photogrammetry scanned objects, and then generalize to images extracted from an RGBD depth camera, as this is a significant shift in the source of data available to the model. Furthermore, note that due to structural similarity of several of the objects in the dataset to one another, it is not too surprising that the model may converge to an incorrect hypothesis given only a single view.
 - **Why is the percent MLH used so high?**  
   Each episode is restricted to a single viewing angle of an object, resulting in significant ambiguity. Furthermore, episodes use a maximum of 100 matching steps so that these experiments can be run quickly.
 - **Are there any other factors contributing to performance differences to be aware of?**  

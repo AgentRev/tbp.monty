@@ -7,11 +7,13 @@
 # license that can be found in the LICENSE file or at
 # https://opensource.org/licenses/MIT.
 
-from typing import Any, Mapping, Protocol
+from collections.abc import Mapping
+from typing import Any, Protocol, runtime_checkable
 
 Memento = Mapping[str, Any]
 
 
+@runtime_checkable
 class Snapshotable(Protocol):
     """Objects that can save/load their internal state.
 

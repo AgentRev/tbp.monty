@@ -10,7 +10,7 @@ This tutorial is a follow-up of our tutorial on [pretraining a model](pretrainin
 > The [first part](pretraining-a-model.md) of this tutorial must be completed for the code in this tutorial to run.
 >
 # Setting up the Experiment Config for Inference
-To follow along, open the `src/tbp/monty/conf/experiment/tutorial/surf_agent_2obj_eval.yaml` file. Let's highlight the various aspects of an evaluation experiment configuration.
+To follow along, open the `src/tbp/monty/conf/experiment/tutorial/surf_agent_2obj_eval_mujoco.yaml` file. Let's highlight the various aspects of an evaluation experiment configuration.
 
 ```yaml
 # @package _global_
@@ -23,13 +23,13 @@ experiment:
   config:
     # ...
     # Specify the path where we saved the pretrained model
-    model_name_or_path: ${path.expanduser:"~/tbp/results/monty/projects/surf_agent_1lm_2obj_train/pretrained"}
+    model_name_or_path: ${path.expanduser:"~/tbp/results/monty/projects/surf_agent_2obj_train_mujoco/pretrained"}
     # ...
     logging:
       # Specify directory where an output directory will be created.
       output_dir: ${path.expanduser:"~/tbp/results/monty/projects"}
       # Specify a name for the evaluation run
-      run_name: surf_agent_2obj_eval
+      run_name: surf_agent_2obj_eval_mujoco
 ```
 
 Now we specify that we want to test the model on "mug" and "banana", and that we want the objects to be rotated a few different ways.
@@ -45,7 +45,7 @@ defaults:
 experiment:
   # ...
   # We will evaluate each of the 3 test rotations
-  n_train_epochs: 3
+  n_eval_epochs: 3
   # ...
 ```
 
@@ -55,7 +55,6 @@ We can see the details at `src/tbp/monty/conf/env_interface/tutorial_eval_2obj_p
 
 do_eval: true
 eval_env_interface_args:
-  parent_to_child_mapping: null
   # Specify objects to test.
   object_names:
   - mug
@@ -115,9 +114,10 @@ sensor_module_0:
       pose_fully_defined: 0.01 # flip bool in 1% of cases
     location: 0.002 # add gaussian noise with 0.002 std (0.2cm)
 sensor_module_1:
-  _target_: tbp.monty.frameworks.models.sensor_modules.Probe
+  _target_: tbp.monty.experiment.sensor_module.ExperimentSensorModule
   sensor_module_id: view_finder
-  save_raw_obs: false
+  sensor_id: view_finder
+  transforms: []
 ```
 
 There are two main differences between this config and the pretraining sensor module config. First, we are adding some noise to the sensor patch, so we define noise parameters and add them to `sensor_module_0`'s dictionary. Second, we're using `delta_threshold` parameters to only send an observation to the learning module if the features have changed significantly. Note that `CameraSM` can be used as either a surface or distant agent, for which `is_surface_sm` should be appropriately set.
@@ -144,7 +144,7 @@ learning_module_0:
     patch:
       # Weighting saturation and value less since these might change under different
       # lighting conditions.
-      hsv: ${np.array:[1, 0.5, 0.5]}
+      hsv: ${np.array:[2, 0.5, 0.5]}
   # Most likely hypothesis needs to have 20% more evidence than the others to
   # be considered certain enough to trigger a terminal condition (match).
   x_percent_threshold: 20
@@ -172,31 +172,27 @@ We then integrate these sensor and learning module configs into the overall expe
 # @package _global_
 
 defaults:
-  - /monty: evidencegraph_exp1000_emin_t3_tot2500
+  - /monty: evidencegraph_exp1000_emin_t3
   - /monty/motor_system_config: surface_curvature_informed_goal1
   - /monty/learning_module: evidence_tutorial_surf_agent_2obj
   - /monty/sensor_module: camera_tutorial_surf_agent_2obj
   - /monty/connectivity: 1lm_1sm
-  - /environment: habitat_ycb_surf_agent
+  - /environment: mujoco_ycb_surf_agent
   - /env_interface: tutorial_eval_2obj_predefined_r3
   - /env_interface/transform: missing_depthto3d_sensor2_semantic0_clip
+  - /termination: any1_objectrecognition_t1000_e500_tot5000
   - /logging: basic_info_monty_runs
+  - /telemetry: info
 
 experiment:
   _target_: tbp.monty.frameworks.experiments.object_recognition_experiments.MontyObjectRecognitionExperiment
   config:
     show_sensor_output: true
-    max_train_steps: 1000
-    max_eval_steps: 500
-    max_total_steps: 5000
     # We will evaluate each of the 3 test rotations
     n_train_epochs: 3
     # Specify the path where we saved the pretrained model
-    model_name_or_path: ${path.expanduser:"~/tbp/results/monty/projects/surf_agent_1lm_2obj_train/pretrained"}
+    model_name_or_path: ${path.expanduser:"~/tbp/results/monty/projects/surf_agent_2obj_train_mujoco/pretrained"}
     n_eval_epochs: 3
-    match_criterion:
-      _target_: tbp.monty.experiment.match_criteria.AnyLMsMatch
-      count: 1
     seed: 42
     supervised_lm_ids: []
     python_log_level: DEBUG
@@ -204,9 +200,7 @@ experiment:
       # Specify directory where an output directory will be created.
       output_dir: ${path.expanduser:"~/tbp/results/monty/projects"}
       # Specify a name for the evaluation run
-      run_name: surf_agent_2obj_eval
-      wandb_group: gm_eval_runs
-
+      run_name: surf_agent_2obj_eval_mujoco
 ```
 
 Note that we have changed the Monty experiment class and the logging config. We also opted for a policy whereby learning-modules generate actions to test hypotheses by producing "goals" for the low-level motor system.
@@ -216,9 +210,9 @@ Note that we have changed the Monty experiment class and the logging config. We 
 To run the experiment, call the `run.py` script with an experiment name as the `experiment` argument.
 
 ```shell
-python run.py experiment=tutorial/surf_agent_2obj_eval
+uv run python run.py experiment=tutorial/surf_agent_2obj_eval_mujoco
 ```
 
-Once the run is complete, you can inspect the inference logs located in `~/tbp/results/monty/projects/surf_agent_2obj_eval`. Since `EvalLoggingConfig` includes a CSV-logger, you should be able to open `eval_stats.csv` and find 6 rows (one for each episode) detailing whether the object was correctly identified, the number of steps required in an episode, etc.
+Once the run is complete, you can inspect the inference logs located in `~/tbp/results/monty/projects/surf_agent_2obj_eval_mujoco`. Since `EvalLoggingConfig` includes a CSV-logger, you should be able to open `eval_stats.csv` and find 6 rows (one for each episode) detailing whether the object was correctly identified, the number of steps required in an episode, etc.
 
 You now know how to pretrain a model and use it to perform inference. In our next tutorial, we will demonstrate how to use Monty for [unsupervised continual learning](unsupervised-continual-learning.md).
